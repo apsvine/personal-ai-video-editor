@@ -145,3 +145,13 @@ transcript after a failed attempt with different settings; its provenance is inc
 Progress is coarse: .05 prerequisite verification, .15 inference, .90 validation
 and publication, 1 success. It is not a time estimate; it can remain at .15 for the
 whole inference. Retry starts fresh inference unless a valid published cache exists.
+
+### Aligned segment envelopes
+
+Before publication, internal segment start is the minimum of the provider segment
+start and all aligned word starts; end is the maximum of the provider segment end
+and all aligned word ends. Word timestamps/confidences are preserved verbatim.
+Wordless segments retain provider bounds and existing validation requirements.
+No padding, clamping, tolerance or synthetic timing is added. Strict finite,
+nonnegative, duration-bound, interval and cross-segment ordering checks still apply
+after envelope derivation. Invalid or overlapping final intervals still fail.

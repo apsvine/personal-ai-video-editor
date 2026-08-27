@@ -41,6 +41,25 @@ def normalized_project(root, project):
     return project
 
 
+def segment_envelopes(value):
+    """Expand only internal containers; never repair or alter provider word timing."""
+    segments = []
+    for segment in value['segments']:
+        words = segment['words']
+        # Reject malformed intervals before min/max can conceal NaN or reversal.
+        for item in (segment, *words):
+            start, end = item['start'], item['end']
+            if any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x)
+                   for x in (start, end)) or start > end:
+                raise ValueError('Invalid timestamp interval')
+        if words:
+            segment = {**segment,
+                       'start': min(segment['start'], min(w['start'] for w in words)),
+                       'end': max(segment['end'], max(w['end'] for w in words))}
+        segments.append(segment)
+    return {**value, 'segments': segments}
+
+
 def validate(value, duration):
     if value.get('schema_version') != 1 or value.get('timing_quality') != 'model_estimated_word_alignment':
         raise ValueError('Unsupported transcript schema/timing')
@@ -139,7 +158,7 @@ def transcribe(root, project, model=None, settings=None, runner=None):
             if 'error' in result:
                 raise n.MediaError(result['error']['code'], result['error']['message'], 422)
         checkpoint(.9)
-        value = validate({**result, **key}, duration)
+        value = validate(segment_envelopes({**result, **key}), duration)
         # Never overwrite the previous artifact until the complete replacement is valid.
         value['content_checksum'] = content_checksum(value)
         n.atomic_json(n.safe_path(directory, 'transcript.json'), value)

@@ -1,8 +1,7 @@
 # Personal AI Video Editor
 
 A private, local-first AI video editing application for one user. V1 will
-target talking-head vertical videos. The current phase is **Phase 04: Transcription Engine** (implementation and mocked
-verification; real-model acceptance pending), built on approved Phase 03 persistent
+target talking-head vertical videos. The current phase is **Phase 04: Transcription Engine** (manual acceptance passed), built on approved Phase 03 persistent
 jobs, Phase 02 normalization and the preserved Phase 00 foundation. It is not a video editor yet.
 
 ## North-star workflow
@@ -462,7 +461,7 @@ CLI jobs use the same engine/store, log and retry semantics as API jobs. Ctrl+C
 cancels the CLI job. Doctor checks dependencies/local model files without inference,
 and reports missing model as WARN rather than FAIL. It never acquires models.
 
-### Verification and future real-model acceptance
+### Verification and real-model acceptance
 
 Run the foundation smoke test, full backend suite, frontend build, default doctor,
 --phase01, --phase02, --phase04, and git diff --check. Unit tests use mock providers
@@ -483,14 +482,20 @@ accuracy needs manual assessment. Silence may hallucinate speech (VAD is disable
 Strict timestamp validation rejects invalid alignment rather than inventing precision.
 Progress is coarse, inference timeout is one hour, and full source/model hashing
 can take time and is not instantly cancellable. No incremental inference resume.
-Actual CPU speed/memory and real speech quality remain unverified until acceptance.
+Manual acceptance confirmed usable real-speech output. Broader language/technical-term
+quality and systematic CPU/memory benchmarks remain future tuning observations.
 
-### Phase 04 checkpoint
+### Phase 04 acceptance
 
-Phase 04A implementation is approved. Phase 04B acquired the approved local
-Systran/faster-whisper-base model into ignored runtime storage. The Phase 04 doctor
-detected its required files; the foundation smoke test, all 51 backend tests,
-frontend production build and git diff --check passed. CPU/INT8 settings remain
-unchanged, with VAD disabled. Real-speech manual acceptance and quality observations
-are still pending; this checkpoint is not final Phase 04 acceptance. No Phase 05
-work is included. Model files and user media are not part of this repository commit.
+Phase 04 manual acceptance passed: local base-model transcription, usable text,
+language detection, genuine word timing, aligned segment envelopes, browser
+refresh, validated cache reuse, cancellation persistence, retry lineage,
+interruption/recovery, prior-transcript preservation, readable no-audio failure,
+and preserved Phase 02 normalization/Phase 03 jobs were confirmed by the user.
+
+The segment-envelope fix preserves every word timestamp and expands only its
+internal parent segment before strict validation. The complete backend suite now
+contains 54 tests, including the exact real-world timing regression. CPU/INT8,
+four threads and VAD disabled remain the baseline. Models, source media,
+normalized outputs, transcripts, jobs and logs remain ignored runtime data.
+No Phase 05 implementation is included.

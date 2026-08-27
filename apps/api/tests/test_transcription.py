@@ -291,3 +291,57 @@ time.sleep(30)
         result = subprocess.run([sys.executable, '-m', 'python.transcription.worker', str(request)], cwd=repo, capture_output=True, timeout=5)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(json.loads(output.read_text())['error']['code'], 'model_not_installed')
+
+    def test_aligned_word_segment_envelope_atomic_publication(self):
+        duration = 22.4801875
+        audio = self.path/'normalized/audio.wav'
+        with wave.open(str(audio), 'wb') as wav:
+            wav.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
+            wav.writeframes(b'\0\0' * round(duration * 16000))
+        self.project['outputs']['audio.wav'] = n.checksum(audio)
+        n.save_project(self.path, self.project, 'completed')
+        for start, end in ((15.779999999999998, 16.08), (21.2, 21.5)):
+            with self.subTest(start=start, end=end):
+                word = dict(text=' word', start=start, end=end, confidence=.9)
+                self.payload['segments'] = [dict(start=15.92, end=21.36, text=' word', confidence=None, words=[word])]
+                original = copy.deepcopy(self.payload)
+                self.run_transcript(settings={**provider.SETTINGS, 'beam_size': 1 if start < 16 else 5})
+                value = e.read_transcript(self.root, self.project)
+                segment = value['segments'][0]
+                self.assertEqual(segment['start'], min(15.92, start))
+                self.assertEqual(segment['end'], max(21.36, end))
+                self.assertEqual(segment['words'], [word])
+                self.assertEqual(self.payload, original)
+                e.validate(value, duration)
+                self.assertEqual(list((self.path/'analysis').glob('*.tmp')), [])
+
+    def test_envelope_does_not_repair_invalid_word_timing(self):
+        self.run_transcript()
+        path = self.path/'analysis/transcript.json'
+        before = path.read_bytes()
+        cases = [((-0.01, .2),), ((1.9, 2.1),), ((.8, .3),),
+                 ((.5, .8), (.2, .4)), ((float('nan'), .5),), ((0., float('inf')),)]
+        for intervals in cases:
+            with self.subTest(intervals=intervals):
+                self.payload['segments'][0]['words'] = [dict(text=' word', start=a, end=b, confidence=None) for a, b in intervals]
+                with self.assertRaises(ValueError):
+                    self.run_transcript(settings={**provider.SETTINGS, 'beam_size': 1})
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_envelope_preserves_segment_order_and_wordless_rules(self):
+        value = dict(schema_version=1, language='en', timing_quality='model_estimated_word_alignment',
+                     segments=[dict(start=.5, end=1., text='', confidence=None, words=[])])
+        self.assertEqual(e.segment_envelopes(value), value)
+        e.validate(e.segment_envelopes(value), 2.)
+        value['segments'][0]['text'] = 'speech without alignment'
+        with self.assertRaises(ValueError):
+            e.validate(e.segment_envelopes(value), 2.)
+        first = copy.deepcopy(self.payload['segments'][0])
+        second = dict(start=1., end=1.5, text='word', confidence=None,
+                      words=[dict(start=.9, end=1.2, text='word', confidence=None)])
+        value['segments'] = [first, second]
+        with self.assertRaises(ValueError):
+            e.validate(e.segment_envelopes(value), 2.)
+        first['start'], first['end'] = 1., .5
+        with self.assertRaises(ValueError):
+            e.segment_envelopes(value)
