@@ -29,7 +29,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase01", action="store_true",
                         help="also require the Phase 01 development environment")
+    parser.add_argument("--phase02", action="store_true",
+                        help="require Phase 01 plus working FFmpeg and ffprobe")
     args = parser.parse_args()
+    args.phase01 = args.phase01 or args.phase02
     failures = []
 
     def report(level, label, detail):
@@ -42,9 +45,10 @@ def main():
     for command in ("node", "npm", "ffmpeg", "ffprobe"):
         executable = shutil.which(command)
         if not executable:
-            required = args.phase01 and command in ("node", "npm")
+            required = ((args.phase01 and command in ("node", "npm"))
+                        or (args.phase02 and command in ("ffmpeg", "ffprobe")))
             report("FAIL" if required else "WARN", command,
-                   "required for Phase 01" if required else "not installed; optional in Phase 00")
+                   "required for the selected phase" if required else "not installed; optional in Phase 00")
             continue
         flag = "-version" if command in ("ffmpeg", "ffprobe") else "--version"
         try:
@@ -54,6 +58,9 @@ def main():
             detail = lines[0][:200] if lines else "no version output"
             report("PASS" if result.returncode == 0 and lines else "WARN",
                    command, detail)
+            if args.phase02 and command in ("ffmpeg", "ffprobe"):
+                report("PASS" if result.returncode == 0 and lines else "FAIL",
+                       f"Phase 02 {command}", "must execute successfully")
             if args.phase01 and command in ("node", "npm"):
                 valid = result.returncode == 0 and bool(lines)
                 if valid and command == "node":
@@ -66,7 +73,8 @@ def main():
                 report("PASS" if valid else "FAIL", f"Phase 01 {command}",
                        "compatible" if valid else "version check failed; see README requirements")
         except (OSError, subprocess.TimeoutExpired, UnicodeError) as error:
-            required = args.phase01 and command in ("node", "npm")
+            required = ((args.phase01 and command in ("node", "npm"))
+                        or (args.phase02 and command in ("ffmpeg", "ffprobe")))
             report("FAIL" if required else "WARN", command, type(error).__name__)
 
     if args.phase01:
@@ -106,7 +114,7 @@ def main():
         report("PASS" if present else "WARN", name,
                "set (value hidden)" if present else "unset; optional placeholder")
 
-    phase = "01" if args.phase01 else "00"
+    phase = "02" if args.phase02 else "01" if args.phase01 else "00"
     print(f"\n{'FAIL' if failures else 'PASS'} | Phase {phase} diagnostics complete")
     return 1 if failures else 0
 
