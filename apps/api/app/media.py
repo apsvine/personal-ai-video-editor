@@ -9,7 +9,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -179,3 +179,56 @@ def retry_job(project_id: str, job_id: str, request: Request):
 def transcript(project_id: str):
     from python.transcription.engine import read_transcript
     return read_transcript(PROJECTS, read_project(PROJECTS, project_id))
+
+
+class TranscriptIdentity(BaseModel):
+    model_config = {'extra': 'forbid'}
+    source_transcript_checksum: str = Field(strict=True, pattern=r'^[a-f0-9]{64}$')
+
+    @model_validator(mode='before')
+    @classmethod
+    def require_utf8(cls, value):
+        # Reject surrogates before Pydantic includes them in a validation error;
+        # the framework's UTF-8 JSON error renderer cannot encode such inputs.
+        try:
+            json.dumps(value, ensure_ascii=False).encode('utf-8')
+        except UnicodeError as error:
+            raise MediaError('invalid_text', 'Use valid UTF-8 strings without unpaired surrogates.', 422) from error
+        return value
+
+
+class TranscriptEdit(TranscriptIdentity):
+    text: str = Field(strict=True, max_length=10000)
+
+
+@router.get('/projects/{project_id}/transcript/review')
+def transcript_review(project_id: str):
+    from python.transcription.review import get_review
+    return get_review(PROJECTS, project_id)
+
+
+def write_review(project_id, body, request, **kwargs):
+    from python.transcription.review import change_review
+    guard_write(request)
+    jobs = manager()
+    # Serialize edits/reset with each other AND raw transcript publication.
+    jobs.reserve()
+    try:
+        return change_review(PROJECTS, project_id, body.source_transcript_checksum, **kwargs)
+    finally:
+        jobs.release()
+
+
+@router.put('/projects/{project_id}/transcript/overrides/{segment_id}')
+def edit_transcript(project_id: str, segment_id: str, body: TranscriptEdit, request: Request):
+    return write_review(project_id, body, request, segment_id=segment_id, text=body.text)
+
+
+@router.post('/projects/{project_id}/transcript/overrides/reset')
+def reset_transcript(project_id: str, body: TranscriptIdentity, request: Request):
+    return write_review(project_id, body, request, reset=True)
+
+
+@router.post('/projects/{project_id}/transcript/overrides/{segment_id}/reset')
+def reset_transcript_segment(project_id: str, segment_id: str, body: TranscriptIdentity, request: Request):
+    return write_review(project_id, body, request, segment_id=segment_id, reset=True)

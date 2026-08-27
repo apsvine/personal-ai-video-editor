@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import TranscriptReview from './TranscriptReview';
 
 const API = 'http://127.0.0.1:8000';
 type Project = { project_id: string; normalization_status: string; reused?: boolean; audio_status?: string };
@@ -10,8 +11,6 @@ async function readResponse(response: Response) {
   if (!response.ok) throw new Error(body.error?.message ?? body.detail?.[0]?.msg ?? 'Import request failed.');
   return body;
 }
-
-type Transcript = { language: string; segments: { text: string }[] };
 
 type ApiStatus = 'Checking…' | 'Connected' | 'Disconnected';
 
@@ -25,7 +24,6 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [activeId, setActiveId] = useState<string | null>(() => localStorage.getItem('current-project'));
-  const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [job, setJob] = useState<Job | null>(null);
 
   useEffect(() => {
@@ -51,9 +49,7 @@ export default function App() {
         if (finished.normalization_status === 'completed' && revision !== loaded) {
           const details = await readResponse(await fetch(`${API}/projects/${outputId}/metadata`, { signal: controller.signal })) as Metadata;
           if (!controller.signal.aborted) { setProject(finished); setMetadata(details); }
-          const response = await fetch(`${API}/projects/${outputId}/transcript`, { signal: controller.signal });
-          const value = response.ok ? await response.json() as Transcript : null;
-          if (!controller.signal.aborted) { setTranscript(value); loaded = revision; }
+          if (!controller.signal.aborted) loaded = revision;
         }
         if (!body) {
           const source = await readResponse(await fetch(`${API}/projects/${activeId}`, { signal: controller.signal }));
@@ -70,7 +66,7 @@ export default function App() {
   }, [activeId]);
 
   async function importVideo(file: File) {
-    setActiveId(null); setJob(null); setTranscript(null);
+    setActiveId(null); setJob(null);
     setBusy(true); setFilename(file.name); setError(''); setProject(null); setMetadata(null);
     setImportState('Creating project…');
     try {
@@ -158,7 +154,7 @@ export default function App() {
   return (
     <main>
       <h1>Personal AI Video Editor</h1>
-      <p>Phase 04 — Transcription Engine</p>
+      <p>Phase 05 — Transcript Review & Word Timing</p>
       <p role="status">API Status: {status}</p>
       <section aria-label="Video import">
         <label htmlFor="video-input">Import Video</label>
@@ -184,11 +180,8 @@ export default function App() {
             {' · '}{metadata.frame_rate.toFixed(2)} fps · rotation {metadata.rotation_degrees}°</p>
           {project.audio_status === 'no_audio' && <p>No audio stream: video is ready; audio.wav was not created.</p>}
           {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startTranscription()}>Transcribe</button>}
-          {transcript && <section aria-label="Transcript">
-            <p>Detected language: {transcript.language}</p>
-            <p className="transcript">{transcript.segments.length ? transcript.segments.map(s => s.text).join('') : 'No speech detected.'}</p>
-          </section>}
-          <video key={project.project_id} controls preload="metadata" src={`${API}/projects/${project.project_id}/proxy`} />
+          <TranscriptReview key={project.project_id} projectId={project.project_id}
+            revision={`${job?.job_id}:${job?.status}`} busy={busy} />
         </>}
       </section>
     </main>

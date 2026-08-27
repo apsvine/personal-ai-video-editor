@@ -1,4 +1,4 @@
-# Architecture — Phase 04 transcription and preserved persistent jobs
+# Architecture — Phase 05 transcript review and preserved pipeline
 
 Phase 00 established repository boundaries. Phase 01 implements only the local
 React + TypeScript + Vite status page and Python 3.11 + FastAPI health endpoint.
@@ -103,4 +103,47 @@ The CLI uses the same manager and engine, requires the backend stopped, and neve
 downloads. UI readiness derives from project normalization, not the latest job;
 failed transcription does not hide the proxy. Transcript fetching occurs on job
 state changes rather than repeatedly hashing media on every polling tick.
-Only a button, status/progress, language, and read-only plain text are added.
+Phase 04 added a button, status/progress, language, and read-only plain text; Phase 05 extends that surface below.
+
+
+## Phase 05 review overlays
+
+`python/transcription/review.py` owns sparse correction validation, merge and reset.
+`apps/api/app/media.py` exposes review/save/reset routes through the existing local
+origin/header guard. The Phase 04 raw API and engine are unchanged. Reused imports
+resolve to the completed output project before selecting the override artifact.
+
+`analysis/transcript.json` is never written by review. Only
+`overrides/user_transcript.json` is created/replaced, using the existing atomic JSON
+utility (unique sibling, flush/fsync, rename). Reset unlinks that file when no
+corrections remain. The existing manager reservation serializes writes with each
+other and raw transcription publication, including cross-process heavy-operation
+exclusion. No new job stage, database, lock format or recovery path is introduced.
+A read can return a consistent older transcript snapshot during publication; the
+next load detects a changed checksum. All writes revalidate identity under lock.
+
+Override segment identities pair canonical index strings with the validated raw
+`content_checksum`. Stale/invalid overrides return raw text with diagnostics, never
+silently merge. Saves and segment resets are blocked until Reset All clears such
+state. Reset All checks the current raw identity before deleting. Raw retrieval
+remains available regardless of override validity. Sequential edits from different
+clients preserve other segment overrides; the last successful save to the same
+segment wins. External file edits while the backend runs are unsupported.
+
+`TranscriptReview.tsx` owns the proxy ref, playback time, review loading, and explicit
+Save/Cancel/reset controls. App retains Phase 03 selected-project/job restoration
+and passes job revision changes to trigger reload. A fresh mount loads persisted
+corrections; no correction text lives in localStorage. `transcript.ts` holds small
+pure timing helpers. `timeupdate`/`seeked` choose the half-open active interval;
+buttons set `video.currentTime`, clamping only to a known media duration. No automatic
+play, frame-perfect sync, timeline or scrolling is introduced.
+
+Raw word buttons use validated original timestamps. Missing/invalid word lists fall
+back to segment seeking without changing the Phase 04 validation contract. Edited
+segment text and raw text/word details are distinct; corrected words are never
+assigned old ASR timestamps. The model-estimated timing diagnostic and optional
+low word-probability tooltip remain understated. All original timing is retained.
+
+Node's built-in runner and React server rendering provide dependency-free tests.
+A separate Vite browser harness exercises real DOM event handlers with mock HTTP
+and media time; backend integration tests cover actual disk/API persistence.

@@ -1,8 +1,7 @@
 # Personal AI Video Editor
 
 A private, local-first AI video editing application for one user. V1 will
-target talking-head vertical videos. The current phase is **Phase 04: Transcription Engine** (manual acceptance passed), built on approved Phase 03 persistent
-jobs, Phase 02 normalization and the preserved Phase 00 foundation. It is not a video editor yet.
+target talking-head vertical videos. The current phase is **Phase 05: Transcript Review & Word Timing UI** (manual acceptance passed; approved), built on approved Phases 00–04. It is not a video editor yet.
 
 ## North-star workflow
 
@@ -102,7 +101,7 @@ npm --prefix apps/web run dev
 ```
 
 Open <http://127.0.0.1:5173>. The page displays the project title,
-“Phase 04 — Transcription Engine”, and “API Status: Connected” when the API returns
+“Phase 05 — Transcript Review & Word Timing”, and “API Status: Connected” when the API returns
 the expected JSON. It starts at “Checking…” and shows “Disconnected” for
 network errors, timeouts, non-success responses, or unexpected JSON. Each
 request times out after three seconds; another check follows five seconds
@@ -143,16 +142,14 @@ behavior on `/health`. Phase 02 tests cover projects, safe paths, metadata,
 commands, disk rejection, cache integrity, failed writes, import APIs, and byte
 ranges. A real integration test generates one tiny synthetic portrait clip in
 temporary storage when system tools are available; otherwise it explicitly skips.
-The frontend build runs strict TypeScript checks before Vite. No frontend test
-framework is added.
+The frontend build runs strict TypeScript checks before Vite. Phase 05 adds dependency-free Node tests and a browser harness, described below.
 
 To preview the production build locally, stop the Vite development server,
 keep the API running, and run `npm --prefix apps/web run preview`. Preview uses
 the same loopback port 5173 so the CORS policy remains unchanged.
 
 Manual checks: open the page, confirm Connected, stop the API and wait up to
-eight seconds for Disconnected, then restart it and confirm recovery. The Phase 02 acceptance steps below cover import and playback. There should be
-no sidebar, timeline, or editing controls.
+eight seconds for Disconnected, then restart it and confirm recovery. The Phase 02 acceptance steps below cover import and playback. There should be no sidebar, complex timeline, captions, or rendering controls.
 
 Dependencies are deliberately limited: React/React DOM for the UI;
 TypeScript, React types, Vite and its React plugin for local development/build;
@@ -208,7 +205,7 @@ must require an explicit user choice. Do not assume prior chat context.
 
 There is no edit planning, captions, rendering, database, authentication, or desktop packaging.
 Remotion and Electron are not installed. No models or media are bundled.
-Phase 05 and later functionality is deliberately excluded.
+Phase 06 and later functionality is deliberately excluded.
 
 ## Phase 02 behavior and API
 
@@ -412,9 +409,7 @@ preservation of successful cached assets, alongside all existing Phase 02 tests.
 
 After normalization completes with audio, click **Transcribe**. The existing
 persisted job controls show progress, Cancel and Retry. On success the UI shows
-detected language and plain read-only text. Proxy playback stays available after
-transcription failure or refresh. There is no highlighting, word interaction,
-editing, captions, timeline, or Phase 05 analysis.
+detected language and transcript text. Phase 05 adds the review controls below. Proxy playback stays available after transcription failure or refresh. Captions, edit planning and rendering remain excluded.
 
 The only added direct dependency is `faster-whisper==1.2.1`; install using the
 existing requirements command. Its required transitive dependencies include
@@ -498,4 +493,145 @@ internal parent segment before strict validation. The complete backend suite now
 contains 54 tests, including the exact real-world timing regression. CPU/INT8,
 four threads and VAD disabled remain the baseline. Models, source media,
 normalized outputs, transcripts, jobs and logs remain ignored runtime data.
-No Phase 05 implementation is included.
+That acceptance covered Phase 04 only; Phase 05 acceptance remains separate.
+
+
+## Phase 05 — transcript review
+
+Transcript review opens automatically beside/below the proxy after normalization;
+click **Transcribe** if no transcript exists. The selected project still restores
+from localStorage and persisted Phase 03 jobs. Refresh after saving reloads corrections
+from the API, not from browser memory. **Reload transcript** also fetches fresh state
+(and discards an unsaved draft).
+
+The raw ASR artifact `analysis/transcript.json` remains immutable to review operations.
+GET `/projects/{id}/transcript` still returns the original Phase 04 artifact.
+Corrections are sparse text-only overrides at
+`runtime/projects/<completed-output-project-id>/overrides/user_transcript.json`.
+Reused imports share their completed output project's corrections. No database,
+new dependency, transcription provider, or Phase 06 feature is added.
+
+The schema uses `schema_version: 1`, `project_id`, `source_transcript_checksum`, and
+`segments: {"0": {"text": "corrected text"}}`. The checksum is the validated raw
+artifact's **content_checksum** (canonical JSON SHA-256, not a byte-file checksum).
+Segment IDs are canonical decimal zero-based indices valid only with that checksum.
+No timestamps or copied transcript are stored. Full schema and endpoints are in
+`docs/data-contracts.md`.
+
+Playback events highlight the segment containing proxy time, using half-open
+`[start, end)` intervals. Gaps have no active segment. Segment timestamp/text
+buttons seek to the segment start; original timed-word buttons seek to their
+unaltered start. Neither action starts playback automatically. Timing is approximate.
+Without valid words, only segment seeking is offered. Corrected words do not inherit
+old word timing: edited text seeks to the segment; expand **Original ASR text and
+timed words** to inspect the raw text and seek its original words. The same details
+view handles raw ASR segment text that differs from concatenated word text.
+
+**Edit → Save** writes once; **Cancel** writes nothing. Empty corrections are allowed,
+with a 10,000-character limit and valid UTF-8 required. **Edited** marks a correction.
+Saving the exact raw text or **Reset Segment** removes that segment's override.
+**Reset All Corrections** safely deletes the override file; the last segment reset
+also removes it. Atomic writes use the existing unique temp-file, flush/fsync and
+rename utility. Edits/reset share the existing heavy-operation reservation so they
+cannot race transcription publication. Busy operations return 409; retry after
+completion. Multiple clients saving the same segment use last-successful-save wins.
+
+Stale checksums or malformed overrides are never applied. Review returns the raw
+text with a readable `stale` or `invalid` state, blocks edits and offers Reset All.
+Reset All requires the current raw checksum but deliberately permits clearing a
+stale/malformed override file. There is no automatic migration. An outdated save
+or reset returns 409 and the UI reloads review. Raw retrieval is independent of
+correction validity. No source/model acquisition occurs while reviewing.
+
+### Phase 05 verification
+
+From the repository root:
+
+```sh
+.venv/bin/python scripts/smoke_test.py
+(cd apps/api && ../../.venv/bin/python -m unittest discover -s tests -v)
+(cd apps/api && ../../.venv/bin/python -m unittest discover -s tests -p test_transcript_review.py -v)
+npm --prefix apps/web test
+npm --prefix apps/web run build
+.venv/bin/python scripts/doctor.py
+.venv/bin/python scripts/doctor.py --phase01
+.venv/bin/python scripts/doctor.py --phase02
+.venv/bin/python scripts/doctor.py --phase04
+git diff --check
+```
+
+All available doctor modes are listed above; there is no separate Phase 03/05 mode.
+The full backend suite includes the real FFmpeg media integration and job/crash
+recovery tests. Standard tests never download or load a model. `npm test` compiles
+and tests review helpers/server-rendered markup with Node's built-in runner.
+For DOM interaction tests start Vite and open
+<http://127.0.0.1:5173/tests/review.html>; require **ALL PASSED**. This separate
+harness mocks HTTP persistence and video time, checks remount restoration, and
+never writes user projects. It is not included in the production entry/build.
+Real media playback and browser refresh are covered by acceptance below.
+
+### Manual Phase 05 acceptance
+
+Run these steps from the repository root. Restart the backend in its own terminal
+if it was already running old code; do not launch a second backend against the same
+runtime. Use the previously approved installed model; do not download another.
+
+1. Start `.venv/bin/python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000`.
+   Start `npm --prefix apps/web run dev` in a second terminal. Open
+   <http://127.0.0.1:5173>, import a small spoken MP4/MOV and wait for normalization.
+2. Click **Transcribe** and wait for succeeded. Confirm the proxy remains available.
+3. Locate **Transcript review** beside/below the proxy; verify language and segment text.
+   Copy the displayed **Project** ID (completed output, not Import project), then run:
+   `ID='paste-project-id'; P="runtime/projects/$ID"; shasum -a 256 "$P/analysis/transcript.json" > /tmp/phase05-raw.sha256`.
+4. Play the proxy; confirm the highlighted segment changes with speech. Pause it.
+5. Click several segment timestamp buttons; confirm the player seeks to their starts.
+6. Click several raw words; confirm approximate seeking. Wordless segments should
+   have only segment seeking; exercise that case in the browser harness if needed.
+7. Click **Edit** on a segment and change its text. Timestamps must not be editable.
+8. Click **Save**; confirm new text and **Edited**. Expand original ASR details and
+   confirm the original text and timed words remain available.
+9. Refresh the browser on the same origin.
+10. Confirm the correction, proxy and transcript restore; inspect
+    `.venv/bin/python -m json.tool "$P/overrides/user_transcript.json"` for a sparse override.
+11. Run `shasum -a 256 -c /tmp/phase05-raw.sha256`; require **OK**.
+    GET `http://127.0.0.1:8000/projects/$ID/transcript` with curl and confirm raw text.
+12. Click **Reset Segment** on the corrected segment.
+13. Confirm its raw text returns and **Edited** disappears. If it was the only
+    correction, `test ! -e "$P/overrides/user_transcript.json"` must succeed.
+14. Edit/save two segments (or the single segment twice for a one-segment clip),
+    then click **Reset All Corrections**. All raw text returns; the override file
+    must be absent. Also try Edit → type → Cancel and verify no correction appears.
+15. Refresh again; verify playback, seeking and raw transcript. Rerun the raw
+    checksum check; require **OK**.
+16. Test stale detection safely with the isolated fixture:
+    `(cd apps/api && ../../.venv/bin/python -m unittest discover -s tests -p test_transcript_review.py -k stale -v)`.
+    This publishes a changed valid transcript only in temporary storage, verifies
+    stale corrections are withheld, rejects outdated saves/resets, and resets using
+    the new identity. The browser harness separately tests the stale warning/reset UI.
+    Do not edit your real raw transcript to simulate this case.
+
+Phase 05 limitations: no automatic scrolling, frame-perfect alignment, word-level
+text edits, new word alignment, multi-client conflict resolution, or semantic
+migration. Reload/refresh is needed to observe external correction changes.
+Human speech/timing accuracy and actual video playback remain manual acceptance.
+
+
+### Phase 05 acceptance — approved
+
+Phase 05 is approved following the user's completed manual acceptance checks:
+
+- A saved single-segment correction and Edited indicator persisted after refresh.
+- Reset Segment restored the original text and cleared the Edited indicator.
+- Reset All Corrections restored both edited segments; originals persisted after refresh.
+
+Final verification for project `c3ee2ffb1d014569b01a8d25911a9872` confirmed four
+original segments, `override_state: none`, zero edited segments, no override file,
+and unchanged raw transcript bytes. Frontend, backend health and review API returned
+HTTP 200. Both servers were left running. The earlier review-loading failure was
+resolved by restarting the stale backend; no transcript migration or validation
+weakening was needed. A cached-transcription/no-overrides regression also covers
+reused-import resolution.
+
+No remaining Phase 05 acceptance or implementation blocker is known. Approximate
+ASR timing and the documented V1 limitations remain intentional. Phase 06 is not
+started. Approval does not authorize a commit, push, merge, or tag.
