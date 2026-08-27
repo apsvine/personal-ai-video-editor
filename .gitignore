@@ -130,3 +130,6 @@ Desktop.ini
 !/sample_media/**/*.m4a
 !/sample_media/**/*.flac
 !/sample_media/**/*.ogg
+
+# Compiled dependency-free frontend tests
+apps/web/.test-build/

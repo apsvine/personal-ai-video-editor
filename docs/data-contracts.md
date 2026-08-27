@@ -1,4 +1,4 @@
-# Phase 04 data contracts (preserving Phase 02/03 artifacts)
+# Phase 05 data contracts (preserving Phase 02–04 artifacts)
 
 All implemented JSON schemas use integer `schema_version: 1`. Files live at
 `runtime/projects/<32 lowercase hex characters>/`; runtime is never tracked.
@@ -155,3 +155,88 @@ Wordless segments retain provider bounds and existing validation requirements.
 No padding, clamping, tolerance or synthetic timing is added. Strict finite,
 nonnegative, duration-bound, interval and cross-segment ordering checks still apply
 after envelope derivation. Invalid or overlapping final intervals still fail.
+
+
+## overrides/user_transcript.json (Phase 05)
+
+Review operations never mutate `analysis/transcript.json`. Overrides belong to the
+completed output project, including when requested through a reused import:
+
+```json
+{
+  "schema_version": 1,
+  "project_id": "<32 lowercase hex output project ID>",
+  "source_transcript_checksum": "<raw content_checksum: 64 lowercase hex>",
+  "segments": {
+    "0": { "text": "Corrected segment text" }
+  }
+}
+```
+
+Only the four shown top-level keys are accepted. Version is integer 1, not boolean.
+Segment keys are canonical zero-based decimal indices (`0`, `1`, ...; no signs or
+leading zeroes), validated against the current raw segment count after checksum
+validation. Each value contains only `text`: a valid UTF-8 string up to 10,000
+characters, allowing empty strings but not NUL or unpaired Unicode surrogates.
+No timing, words, confidence, provider or other raw fields are copied into overrides.
+The artifact contains only corrections; saving original text removes an entry.
+
+Identity is the Phase 04 canonical JSON SHA-256 `content_checksum`, **not** a hash of
+serialized file bytes. Whitespace/key-order changes alone do not change identity.
+Segment index plus this checksum is a deterministic reference across refreshes.
+A valid changed raw transcript invalidates the entire old override document; there
+is no semantic migration. Invalid raw transcripts remain unavailable through the
+existing Phase 04 validation, rather than becoming new identities.
+
+### Review API
+
+All endpoints are beneath `/projects/{id}/transcript`:
+
+| Method | Suffix | Body / result |
+| --- | --- | --- |
+| GET | (none) | Unchanged Phase 04 raw artifact |
+| GET | `/review` | Merged review representation below |
+| PUT | `/overrides/{segment_id}` | `{source_transcript_checksum, text}`; returns merged review |
+| POST | `/overrides/{segment_id}/reset` | `{source_transcript_checksum}`; returns merged review |
+| POST | `/overrides/reset` | `{source_transcript_checksum}`; resets all, returns merged review |
+
+Write bodies forbid extra keys, including attempted timestamp edits. Writes require
+`X-Media-Import: 1` and the same local-origin guard as existing APIs. Project IDs
+and all paths use the existing traversal/symlink protections. No arbitrary path is
+accepted. Project, normalized source integrity and raw transcript are validated
+before access. Missing projects/transcripts return 404; prerequisite failures 409;
+invalid segments/text/request schemas 422; foreign/missing write guard 403;
+failed storage writes produce readable `override_write_failed` (500).
+
+A merged response contains `schema_version: 1`, resolved `project_id`,
+`source_transcript_checksum`, `language`, `timing_quality`, `override_state`,
+`override_message` (nullable), and `segments`. Each segment retains all raw fields
+and timing/words verbatim, adds `segment_id`, `raw_text`, `edited`, and replaces
+only `text` when a valid override applies. This view is not a replacement ASR
+artifact and has no independent `content_checksum`.
+
+`override_state` is `none`, `applied`, `stale`, or `invalid`. `stale` means a valid
+schema references a different raw checksum; `invalid` means unreadable/malformed
+JSON or invalid schema/segment references. Both return HTTP 200 with readable
+`override_message` and **only raw text**, leaving the override file untouched.
+Raw GET remains readable. Saves/segment resets in these states return 409
+`override_stale` / `override_invalid`; Reset All can discard them using the current
+raw checksum. An outdated request checksum returns 409 `transcript_changed` without
+writing; reload review first. A busy heavy-operation reservation returns 409
+`job_busy` without changes.
+
+Publication uses unique temporary siblings, flush/fsync and atomic rename, exactly
+as existing artifact writes; failed publication leaves the old complete file.
+Reset Segment removes one entry; Reset All or removal of the final entry safely
+unlinks the file. Reset All is idempotent when no file exists. No raw timestamps
+or text are changed. Unlink does not claim additional power-loss durability beyond
+the existing filesystem semantics.
+
+### Review seeking semantics
+
+Segment clicks seek to raw `start`; raw word clicks seek to their own validated
+`start`. Active intervals are `[start, end)` in proxy playback seconds; gaps and
+end-of-transcript have no active segment. Seeking never writes transcript data.
+Missing/invalid word lists use segment-only seeking; Phase 04 still rejects speech
+segments without alignment. Corrected text uses segment seeking, while original
+ASR words remain available separately. No new alignment is inferred from edits.
