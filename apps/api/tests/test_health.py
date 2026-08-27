@@ -1,6 +1,10 @@
 """Run from apps/api with: python -m unittest discover -s tests -v."""
 
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+from app import media
 
 from fastapi.testclient import TestClient
 from app.main import app
@@ -8,6 +12,8 @@ from app.main import app
 
 class HealthTest(unittest.TestCase):
     def setUp(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(patch.object(media, 'PROJECTS', Path(directory).resolve() / 'projects'))
         self.client = self.enterContext(TestClient(app))
 
     def test_health(self):

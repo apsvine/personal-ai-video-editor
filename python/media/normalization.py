@@ -1,15 +1,19 @@
-"""Phase 02 media artifacts. No queue, database, or editing behavior."""
+"""Phase 02 media artifacts with optional Phase 03 job control."""
 
 from datetime import datetime, timezone
 from fractions import Fraction
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import uuid
+import threading
+import time
+from contextlib import contextmanager
 
 SCHEMA = 1
 CONFIG = "h264-aac-720-fit-cfr30-mono16k-v1"
@@ -40,11 +44,13 @@ def safe_path(root, *parts):
 
 
 def atomic_json(path, value):
-    temp = path.with_name(path.name + ".tmp")
+    temp = safe_path(path.parent, path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
         with temp.open("x", encoding="utf-8") as stream:
             json.dump(value, stream, indent=2, allow_nan=False)
             stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
         temp.replace(path)
     finally:
         temp.unlink(missing_ok=True)
@@ -122,7 +128,77 @@ def create_project(root, filename, size, modified=None):
     return project
 
 
+_CONTROL = threading.local()
+
+
+class JobControl:
+    def __init__(self, lock_fd, progress):
+        self.lock_fd = lock_fd
+        self.progress = progress
+        self.cancel = threading.Event()
+        self.shutdown = threading.Event()
+
+    def check(self):
+        if self.shutdown.is_set():
+            raise MediaError("backend_interrupted", "Backend stopped before completion. Retry this job.", 409)
+        if self.cancel.is_set():
+            raise MediaError("cancelled", "Normalization was cancelled.", 409)
+
+
+@contextmanager
+def job_context(control):
+    _CONTROL.value = control
+    try:
+        yield
+    finally:
+        del _CONTROL.value
+
+
+def checkpoint(value):
+    control = getattr(_CONTROL, "value", None)
+    if control:
+        control.check()
+        control.progress(value)
+
+
+def controlled_tool(command, log, control):
+    control.check()
+    with log.open("a") as stream:
+        stream.write(f"Command: {command!r}\n")
+        stream.flush()
+        # The inherited lock prevents a new conversion while an orphan tool exits.
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=stream,
+                              text=True, errors="replace", pass_fds=(control.lock_fd,)) as process:
+            deadline = time.monotonic() + 3600
+            try:
+                while True:
+                    control.check()
+                    if time.monotonic() > deadline:
+                        raise MediaError("tool_timeout", "Media tool timed out. See logs/media.log.", 422)
+                    try:
+                        output, _ = process.communicate(timeout=0.1)
+                        break
+                    except subprocess.TimeoutExpired:
+                        pass
+                control.check()
+                if process.returncode:
+                    raise MediaError("invalid_media", "Media could not be decoded or converted. See logs/media.log.", 422)
+                stream.write(output)
+                return output
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.communicate(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.communicate()
+
+
 def run_tool(command, log):
+    control = getattr(_CONTROL, "value", None)
+    if control:
+        return controlled_tool(command, log, control)
     try:
         result = subprocess.run(command, capture_output=True, text=True, errors="replace",
                                 timeout=3600, check=False)
@@ -224,24 +300,37 @@ def normalize(root, project):
     normalized = safe_path(path, "normalized")
     source = safe_path(path, "source", project["source"]["filename"])
     log = safe_path(path, "logs", "media.log")
+    previously_completed = project.get("normalization_status") == "completed"
     try:
+        checkpoint(0.05)
         require_tools()
-        save_project(path, project, "inspecting")
+        # Check cache before changing a completed project's commit marker.
         project["source"]["sha256"] = checksum(source)
         cached = find_cached(root, project["source"]["sha256"])
+        if cached and cached["project_id"] == project["project_id"]:
+            return {**cached, "reused": True}
+        project.pop("error", None)
+        save_project(path, project, "inspecting")
         if cached:
             project["reused_project_id"] = cached["project_id"]
             save_project(path, project, "reused")
             return {**cached, "reused": True}
+        # Stale attempt files are disposable only for an unfinished project.
+        for name in ("proxy.tmp.mp4", "audio.tmp.wav", "metadata.json.tmp"):
+            safe_path(normalized, name).unlink(missing_ok=True)
+        checkpoint(0.15)
         metadata = inspect(source, log)
         metadata["source"] = project["source"]
         check_disk(root, project["source"]["size_bytes"], metadata["duration_seconds"], copying=False)
         proxy_command, audio_command = normalization_plan(source, normalized, metadata)
         save_project(path, project, "creating_proxy")
+        checkpoint(0.25)
         run_tool(proxy_command, log)
         if audio_command:
             save_project(path, project, "extracting_audio")
+            checkpoint(0.65)
             run_tool(audio_command, log)
+        checkpoint(0.9)
         # Validate tools produced nonempty artifacts before publishing ANY final output.
         names = [("proxy.tmp.mp4", "proxy.mp4")]
         if audio_command:
@@ -260,6 +349,8 @@ def normalize(root, project):
         save_project(path, project, "completed")
         return {**project, "reused": False}
     except Exception as error:
+        if previously_completed:
+            raise
         # No completed output set survives a failed attempt. The source is retained.
         for name in ("proxy.mp4", "audio.wav", "metadata.json"):
             safe_path(normalized, name).unlink(missing_ok=True)

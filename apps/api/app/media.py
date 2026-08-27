@@ -1,13 +1,14 @@
-"""One-file local import API; processing belongs to the upload request."""
+"""Local media import and persistent normalization job routes."""
 
 import asyncio
 import json
 from pathlib import Path
 import sys
 import threading
+from typing import Literal
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -15,15 +16,30 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from python.media.normalization import (  # noqa: E402
-    MediaError, check_disk, create_project, normalize, project_path, read_project,
+    MediaError, check_disk, create_project, project_path, read_project,
     safe_path, save_project,
 )
 
 PROJECTS = ROOT / "runtime" / "projects"
 router = APIRouter()
-# Only one active transfer/conversion per server process; no worker or job queue.
+# Shared by the upload reservation and job runner; no queue.
 IMPORT_LOCK = threading.Lock()
+from python.common.jobs import JobManager
+MANAGER = None
+
+
+def manager():
+    global MANAGER
+    if MANAGER is None or MANAGER.root != PROJECTS:
+        MANAGER = JobManager(PROJECTS, IMPORT_LOCK)
+    return MANAGER
+
+
 LOCAL_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173"}
+
+
+class JobRequest(BaseModel):
+    stage: Literal["normalize"] = "normalize"
 
 
 class ImportRequest(BaseModel):
@@ -55,8 +71,9 @@ async def upload_source(project_id: str, request: Request):
     guard_write(request)
     if request.headers.get("content-type", "").split(";")[0] != "application/octet-stream":
         raise MediaError("invalid_content_type", "Upload the video as application/octet-stream.", 415)
-    if not IMPORT_LOCK.acquire(blocking=False):
-        raise MediaError("import_busy", "Another import is running. Wait for it to finish.", 409)
+    jobs = manager()
+    jobs.reserve()
+    handed_off = False
     path = project = temporary = None
     try:
         project = read_project(PROJECTS, project_id)
@@ -78,7 +95,20 @@ async def upload_source(project_id: str, request: Request):
             raise MediaError("size_mismatch", "Upload was incomplete. Select the file and try again.")
         temporary.replace(source)
         save_project(path, project, "uploaded")
-        return await run_in_threadpool(normalize, PROJECTS, project)
+        # The worker owns the reservation after start, including on start failure.
+        handed_off = True
+        job = jobs.start(project_id, reserved=True)
+        if request.query_params.get("background") == "true":
+            return JSONResponse(status_code=202, content=job)
+        # Compatibility for Phase 02 clients; disconnect does not own the worker.
+        while True:
+            current = jobs.read(project_id, job["job_id"])
+            if current["status"] not in ("pending", "running"):
+                if current["status"] != "succeeded":
+                    failure = current["error"]
+                    raise MediaError(failure["code"], failure["message"], 422)
+                return {**read_project(PROJECTS, current["result_project_id"]), "reused": current["reused"]}
+            await asyncio.sleep(0.05)
     except (Exception, asyncio.CancelledError) as error:
         if project is not None and project.get("normalization_status") in ("uploading", "uploaded"):
             failure = error if isinstance(error, MediaError) else MediaError(
@@ -92,7 +122,8 @@ async def upload_source(project_id: str, request: Request):
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-        IMPORT_LOCK.release()
+        if not handed_off:
+            jobs.release()
 
 
 def completed_asset(project_id, filename):
@@ -114,3 +145,31 @@ def metadata(project_id: str):
 def proxy(project_id: str):
     return FileResponse(completed_asset(project_id, "proxy.mp4"), media_type="video/mp4",
                         headers={"Cache-Control": "no-cache"})
+
+
+@router.post("/projects/{project_id}/jobs", status_code=202)
+def start_job(project_id: str, request: Request, body: JobRequest | None = None):
+    guard_write(request)
+    return manager().start(project_id)
+
+
+@router.get("/projects/{project_id}/jobs/latest")
+def latest_job(project_id: str):
+    return manager().latest(project_id)
+
+
+@router.get("/projects/{project_id}/jobs/{job_id}")
+def get_job(project_id: str, job_id: str):
+    return manager().read(project_id, job_id)
+
+
+@router.post("/projects/{project_id}/jobs/{job_id}/cancel", status_code=202)
+def cancel_job(project_id: str, job_id: str, request: Request):
+    guard_write(request)
+    return manager().cancel(project_id, job_id)
+
+
+@router.post("/projects/{project_id}/jobs/{job_id}/retry", status_code=202)
+def retry_job(project_id: str, job_id: str, request: Request):
+    guard_write(request)
+    return manager().retry(project_id, job_id)

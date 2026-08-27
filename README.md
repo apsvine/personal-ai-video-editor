@@ -1,8 +1,9 @@
 # Personal AI Video Editor
 
 A private, local-first AI video editing application for one user. V1 will
-target talking-head vertical videos. The current phase is **Phase 02: Media Import
-and Normalization (approved)**, built on the preserved Phase 00 foundation. It is not a video editor yet.
+target talking-head vertical videos. The current phase is **Phase 03: Persistent Job Pipeline and Crash Recovery**
+(approved; manual acceptance passed), built on approved Phase 02 media
+normalization and the preserved Phase 00 foundation. It is not a video editor yet.
 
 ## North-star workflow
 
@@ -102,7 +103,7 @@ npm --prefix apps/web run dev
 ```
 
 Open <http://127.0.0.1:5173>. The page displays the project title,
-“Phase 02 — Media Import and Normalization”, and “API Status: Connected” when the API returns
+“Phase 03 — Persistent Job Pipeline and Crash Recovery”, and “API Status: Connected” when the API returns
 the expected JSON. It starts at “Checking…” and shows “Disconnected” for
 network errors, timeouts, non-success responses, or unexpected JSON. Each
 request times out after three seconds; another check follows five seconds
@@ -208,7 +209,7 @@ must require an explicit user choice. Do not assume prior chat context.
 There is no transcription, AI functionality, edit planning,
 captions, rendering, database, authentication, or desktop packaging.
 Remotion and Electron are not installed. No models or media are bundled.
-Phase 03 and later functionality is deliberately excluded.
+Phase 04 and later functionality is deliberately excluded.
 
 ## Phase 02 behavior and API
 
@@ -233,9 +234,11 @@ content identity; SHA-256 of the received bytes establishes identity.
 Both write endpoints require `X-Media-Import: 1`. Errors use
 `{"error":{"code":"...","message":"..."}}`, plus disk-space byte counts when
 applicable; malformed request schemas use FastAPI's standard 422 `detail`.
-Only one upload/conversion runs at a time in a single server process; a second
-gets 409, with no queue. Run a single Uvicorn worker. Poll status during the PUT;
-the request remains open through processing. Stages are not percentage estimates.
+Only one upload/conversion runs at a time; a second gets structured 409
+`job_busy`, with no queue. Run a single Uvicorn worker. The original PUT remains
+synchronous for compatibility, but now executes through a persisted job. The UI
+uses `?background=true`, returning 202 after upload, and polls job status.
+Progress represents stage milestones, not time or frame percentage.
 
 The proxy is H.264/yuv420p, AAC when audio exists, fast-start MP4, 30 fps CFR,
 with an aspect-preserving 1280x720 landscape or 720x1280 portrait bounding box.
@@ -261,8 +264,9 @@ succeed. `project.json` completion is the commit marker; the API never serves
 non-completed artifacts. Handled failures remove normalized outputs and keep
 source/error/logs. An abrupt process kill may leave temporary or complete files
 under an unfinished project, but those are never treated as a valid cache entry.
-There is no restart/resume mechanism; import again. Abandoned/failed/reused
-projects remain on disk for inspection and require manual cleanup while idle.
+Phase 03 marks abandoned jobs interrupted and permits retry from the retained
+source. Abandoned/failed/reused projects remain on disk for inspection and
+require manual cleanup while idle.
 
 ## Manual Phase 02 acceptance
 
@@ -312,3 +316,96 @@ and ffprobe yourself, restart the backend environment, and require this to pass:
 
 Also try a silent source: success must explicitly say there is no audio; WAV
 absence is intentional in that case. Do not commit any of these runtime files.
+
+## Phase 03 jobs
+
+Normalization runs in one background thread independently of the HTTP request.
+Jobs persist at `runtime/projects/<project-id>/jobs/<job-id>.json`. Writes use a
+unique temporary sibling, file flush/fsync, and atomic rename. The UI stores only
+the selected project ID in localStorage and reloads authoritative job status from
+the API every 750 ms. Keep using the same browser origin for refresh restoration.
+Refreshing during normalization is safe; refreshing during the upload can abort
+that upload, which is not resumable. Re-import an incomplete upload.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| PUT | `/projects/{id}/source?background=true` | Upload source and start normalization; 202 job |
+| POST | `/projects/{id}/jobs` | Start normalization from a complete retained source; 202 job |
+| GET | `/projects/{id}/jobs/latest` | Latest attempt, or null if none |
+| GET | `/projects/{id}/jobs/{job_id}` | Persisted job |
+| POST | `/projects/{id}/jobs/{job_id}/cancel` | Request cancellation; 202, poll for terminal status |
+| POST | `/projects/{id}/jobs/{job_id}/retry` | New linked attempt for failed/interrupted/cancelled job; 202 |
+
+All writes retain `X-Media-Import: 1` and local-origin protection. There is no
+stage selection: only normalization can execute. Future stage names are contracts
+only. No queue, database, AI, or new dependency is introduced.
+
+Lifecycle: pending → running → succeeded / failed / cancelled / interrupted.
+Startup converts abandoned pending/running records to interrupted. Graceful
+shutdown also interrupts active work. Retry creates a new ID and `retry_of` link,
+preserving the original attempt. Existing verified assets are reused; otherwise
+normalization reruns from the retained source. It does not resume partway through
+an FFmpeg command. Failed uploads need a new import, not a job retry.
+
+Cancel checks run between stages and every 100 ms while a subprocess runs.
+The runner terminates the child, waits up to two seconds, then kills/reaps it if
+needed. No shell is used. Normalization removes partial outputs; completed cache
+assets are not deleted. Cancellation after the publication boundary may resolve
+as succeeded. Hashing and final publication are not instantaneously cancellable.
+Readable errors appear in the UI; tracebacks and FFmpeg output remain in local
+`logs/job-<id>.log` and `logs/media.log`, never returned by a log endpoint.
+
+POSIX advisory locks protect one backend per runtime and one heavy operation.
+A tool inherits the heavy lock: after SIGKILL, a surviving child may finish its
+current command, but new jobs receive 409 until that child exits. It cannot
+publish project completion. Recovery never assumes success. Do not delete lock
+files while any backend/tool is alive. This phase targets macOS/Linux, not Windows.
+No automatic retry or progress time estimate is provided. Damaged/unreadable job
+JSON causes startup to fail visibly; restore it from backup or inspect it locally
+while all processes are stopped. No automatic destructive repair is attempted.
+
+### Manual Phase 03 acceptance
+
+Run commands from the repository root. Stop existing frontend/backend processes
+in their own terminals first; do not run two backends against the same runtime.
+
+1. Start the backend: `.venv/bin/python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000`.
+2. Start the frontend: `npm --prefix apps/web run dev`. Open <http://127.0.0.1:5173>.
+3. Import a small real MP4/MOV, observe stage/status/progress, and confirm proxy
+   playback and metadata. Refresh while normalization is running; the same job
+   must return. If it finishes too quickly, use the delayed launcher below.
+4. Stop only the backend with Ctrl+C. Start the acceptance-only launcher:
+   `.venv/bin/python scripts/job_demo.py --delay 20`. It waits in a cancellable
+   subprocess before every normalization attempt; the normal launcher has no delay.
+5. Import the small video again. During the 20-second running state, refresh;
+   confirm the same job ID and progress. Click **Cancel**, wait for **cancelled**,
+   and refresh again to confirm persistence. The source must remain intact.
+6. Click **Retry**. Confirm a new job ID; wait about 20 seconds for **succeeded**
+   and playback. Verified cached output may be reused. The old cancelled JSON
+   remains on disk, linked by the new record's `retry_of`.
+7. Import again to trigger another delayed job. While running, stop the backend
+   with Ctrl+C. Restart the same demo command. Refresh if necessary; confirm
+   **interrupted** and a readable message. Click **Retry**, then wait for success.
+8. For a hard crash, start the demo in a terminal using:
+   `.venv/bin/python scripts/job_demo.py --delay 20 & BACKEND_PID=$!; echo "$BACKEND_PID"; wait "$BACKEND_PID"`.
+   Note the displayed shell PID, import again, and in another terminal run
+   `kill -KILL <that-backend-pid>` while running. Restart the demo server.
+   Confirm interrupted. A retry may return `job_busy` until the orphan's
+   20-second wait finishes; retry again, and confirm success. Never kill an
+   unrelated process or the frontend.
+9. During any delayed running job, copy the displayed **Import project** ID:
+   `ID='paste-import-project-id'`. Request a second heavy operation:
+   `curl -i -X POST -H 'X-Media-Import: 1' "http://127.0.0.1:8000/projects/$ID/jobs"`.
+   Require HTTP 409 with `error.code: job_busy`, and no second job file.
+10. Inspect status without the browser:
+    `curl "http://127.0.0.1:8000/projects/$ID/jobs/latest"`.
+    Inspect `runtime/projects/$ID/jobs/` and local logs. Confirm progress stays
+    within 0–1 and no raw technical logs appear in the UI.
+11. Stop the demo and return to the normal backend command. Repeat Phase 02
+    source-integrity, cache, corrupt-input and playback checks above. Do not
+    commit generated runtime files.
+
+Automated coverage includes simulated and real process interruption, actual
+subprocess cancellation/reaping, exclusion across managers, graceful shutdown,
+API recovery, retry lineage, atomic JSON failure, partial-output cleanup, and
+preservation of successful cached assets, alongside all existing Phase 02 tests.

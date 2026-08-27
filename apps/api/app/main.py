@@ -1,12 +1,25 @@
-"""Local health and Phase 02 media APIs; no editing pipeline."""
+"""Local health, media and persistent normalization job APIs."""
 
+from contextlib import asynccontextmanager
+from app import media
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.media import router, MediaError
 
 
+@asynccontextmanager
+async def lifespan(app):
+    jobs = media.manager()
+    jobs.startup()
+    try:
+        yield
+    finally:
+        jobs.close()
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Personal AI Video Editor API",
     docs_url=None,
     redoc_url=None,

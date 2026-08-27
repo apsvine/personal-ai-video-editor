@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 const API = 'http://127.0.0.1:8000';
 type Project = { project_id: string; normalization_status: string; reused?: boolean; audio_status?: string };
+type Job = { job_id: string; project_id: string; stage: string; status: string; progress: number; error: { message: string } | null; result_project_id: string | null; reused: boolean };
 type Metadata = { width: number; height: number; duration_seconds: number; frame_rate: number; rotation_degrees: number };
 
 async function readResponse(response: Response) {
@@ -21,7 +22,8 @@ export default function App() {
   const [error, setError] = useState('');
   const [project, setProject] = useState<Project | null>(null);
   const [metadata, setMetadata] = useState<Metadata | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(() => localStorage.getItem('current-project'));
+  const [job, setJob] = useState<Job | null>(null);
 
   useEffect(() => {
     if (!activeId) return;
@@ -29,10 +31,26 @@ export default function App() {
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
-        const response = await fetch(`${API}/projects/${activeId}`, { signal: controller.signal });
-        const body = await readResponse(response) as Project;
-        if (!controller.signal.aborted) setImportState(body.normalization_status.replaceAll('_', ' '));
-      } catch { /* The upload request reports errors; temporary polling errors can recover. */ }
+        const body = await readResponse(await fetch(`${API}/projects/${activeId}/jobs/latest`, { signal: controller.signal })) as Job | null;
+        if (controller.signal.aborted) return;
+        setJob(body);
+        if (body) {
+          const running = ['pending', 'running'].includes(body.status);
+          setBusy(running);
+          setImportState(`${body.stage} — ${body.status}${body.reused ? ' — reused verified normalized assets' : ''}`);
+          if (body.status === 'succeeded' && body.result_project_id) {
+            const finished = await readResponse(await fetch(`${API}/projects/${body.result_project_id}`, { signal: controller.signal })) as Project;
+            const details = await readResponse(await fetch(`${API}/projects/${body.result_project_id}/metadata`, { signal: controller.signal })) as Metadata;
+            if (!controller.signal.aborted) { setProject(finished); setMetadata(details); }
+          }
+        } else {
+          const source = await readResponse(await fetch(`${API}/projects/${activeId}`, { signal: controller.signal }));
+          if (!controller.signal.aborted) {
+            setImportState(source.normalization_status.replaceAll('_', ' '));
+            if (source.error) setError(source.error.message);
+          }
+        }
+      } catch { /* Keep polling through backend restarts. */ }
       if (!controller.signal.aborted) timer = setTimeout(poll, 750);
     }
     void poll();
@@ -40,6 +58,7 @@ export default function App() {
   }, [activeId]);
 
   async function importVideo(file: File) {
+    setActiveId(null); setJob(null);
     setBusy(true); setFilename(file.name); setError(''); setProject(null); setMetadata(null);
     setImportState('Creating project…');
     try {
@@ -48,21 +67,29 @@ export default function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Media-Import': '1' },
         body: JSON.stringify({ filename: file.name, size_bytes: file.size, last_modified_ms: file.lastModified }),
       })) as Project;
-      setActiveId(created.project_id);
+      localStorage.setItem('current-project', created.project_id);
+      setJob(null); setActiveId(created.project_id);
       setImportState('Uploading…');
-      const finished = await readResponse(await fetch(`${API}/projects/${created.project_id}/source`, {
+      const started = await readResponse(await fetch(`${API}/projects/${created.project_id}/source?background=true`, {
         method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', 'X-Media-Import': '1' }, body: file,
-      })) as Project;
-      setActiveId(null);
-      const details = await readResponse(await fetch(`${API}/projects/${finished.project_id}/metadata`)) as Metadata;
-      setProject(finished); setMetadata(details);
-      setImportState(finished.reused ? 'Success — reused verified normalized assets.' : 'Success — normalization completed.');
+      })) as Job;
+      setJob(started);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Import failed.');
       setImportState('Import failed.');
-    } finally {
-      setActiveId(null); setBusy(false);
+      setBusy(false);
     }
+  }
+
+  async function jobAction(action: 'cancel' | 'retry') {
+    if (!job) return;
+    try {
+      setError('');
+      const next = await readResponse(await fetch(`${API}/projects/${job.project_id}/jobs/${job.job_id}/${action}`, {
+        method: 'POST', headers: { 'X-Media-Import': '1' },
+      })) as Job;
+      setJob(next); setBusy(true);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Job request failed.'); }
   }
 
   useEffect(() => {
@@ -104,7 +131,7 @@ export default function App() {
   return (
     <main>
       <h1>Personal AI Video Editor</h1>
-      <p>Phase 02 — Media Import and Normalization</p>
+      <p>Phase 03 — Persistent Job Pipeline and Crash Recovery</p>
       <p role="status">API Status: {status}</p>
       <section aria-label="Video import">
         <label htmlFor="video-input">Import Video</label>
@@ -116,7 +143,14 @@ export default function App() {
           }} />
         {filename && <p>File: {filename}</p>}
         <p role="status" aria-live="polite">{importState}</p>
-        {error && <p role="alert">{error}</p>}
+        {activeId && <p>Import project: <code>{activeId}</code></p>}
+        {job && <>
+          <p>Job: <code>{job.job_id}</code> · {job.stage} · {job.status} · {Math.round(job.progress * 100)}%</p>
+          <progress max={1} value={job.progress} aria-label="Job progress" />
+          {['pending', 'running'].includes(job.status) && <button onClick={() => void jobAction('cancel')}>Cancel</button>}
+          {['failed', 'interrupted', 'cancelled'].includes(job.status) && <button onClick={() => void jobAction('retry')}>Retry</button>}
+        </>}
+        {(error || job?.error?.message) && <p role="alert">{error || job?.error?.message}</p>}
         {project && metadata && <>
           <p>Project: <code>{project.project_id}</code></p>
           <p>Source: {metadata.width} × {metadata.height} · {metadata.duration_seconds.toFixed(2)} seconds
