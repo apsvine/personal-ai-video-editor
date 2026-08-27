@@ -1,0 +1,11 @@
+body {
+  margin: 2rem;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  color: #222;
+  background: #fff;
+}
+
+h1 {
+  font-size: 1.5rem;
+}

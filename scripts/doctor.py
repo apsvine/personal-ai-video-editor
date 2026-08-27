@@ -1,5 +1,7 @@
 """Read-only system diagnostics, except local runtime directories/write probes."""
 
+import argparse
+import importlib.metadata
 import os
 from pathlib import Path
 import shutil
@@ -24,6 +26,10 @@ def runtime_path(name):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--phase01", action="store_true",
+                        help="also require the Phase 01 development environment")
+    args = parser.parse_args()
     failures = []
 
     def report(level, label, detail):
@@ -36,7 +42,9 @@ def main():
     for command in ("node", "npm", "ffmpeg", "ffprobe"):
         executable = shutil.which(command)
         if not executable:
-            report("WARN", command, "not installed; optional in Phase 00")
+            required = args.phase01 and command in ("node", "npm")
+            report("FAIL" if required else "WARN", command,
+                   "required for Phase 01" if required else "not installed; optional in Phase 00")
             continue
         flag = "-version" if command in ("ffmpeg", "ffprobe") else "--version"
         try:
@@ -46,8 +54,33 @@ def main():
             detail = lines[0][:200] if lines else "no version output"
             report("PASS" if result.returncode == 0 and lines else "WARN",
                    command, detail)
+            if args.phase01 and command in ("node", "npm"):
+                valid = result.returncode == 0 and bool(lines)
+                if valid and command == "node":
+                    try:
+                        version = tuple(int(part) for part in lines[0].lstrip("v").split("."))
+                        valid = ((20, 19, 0) <= version < (21, 0, 0)
+                                 or version >= (22, 12, 0))
+                    except ValueError:
+                        valid = False
+                report("PASS" if valid else "FAIL", f"Phase 01 {command}",
+                       "compatible" if valid else "version check failed; see README requirements")
         except (OSError, subprocess.TimeoutExpired, UnicodeError) as error:
-            report("WARN", command, type(error).__name__)
+            required = args.phase01 and command in ("node", "npm")
+            report("FAIL" if required else "WARN", command, type(error).__name__)
+
+    if args.phase01:
+        report("PASS" if sys.version_info[:2] == (3, 11) else "FAIL", "Phase 01 Python",
+               "requires Python 3.11; run with the project virtual environment")
+        report("PASS" if sys.prefix != sys.base_prefix else "WARN", "Virtual environment",
+               "active" if sys.prefix != sys.base_prefix else "not active; isolation recommended")
+        for package in ("fastapi", "uvicorn", "httpx"):
+            try:
+                report("PASS", package, importlib.metadata.version(package))
+            except importlib.metadata.PackageNotFoundError:
+                report("FAIL", package, "missing; install apps/api/requirements-dev.txt")
+        report("PASS" if (ROOT / "apps/web/node_modules/vite/package.json").is_file() else "FAIL",
+               "Frontend dependencies", "run npm ci in apps/web if missing")
 
     for name in RUNTIME_NAMES:
         try:
@@ -73,7 +106,8 @@ def main():
         report("PASS" if present else "WARN", name,
                "set (value hidden)" if present else "unset; optional placeholder")
 
-    print(f"\n{'FAIL' if failures else 'PASS'} | Phase 00 diagnostics complete")
+    phase = "01" if args.phase01 else "00"
+    print(f"\n{'FAIL' if failures else 'PASS'} | Phase {phase} diagnostics complete")
     return 1 if failures else 0
 
 

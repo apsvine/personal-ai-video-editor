@@ -1,0 +1,3 @@
+# FastAPI supplies the API; Uvicorn runs it locally without optional extras.
+fastapi==0.141.1
+uvicorn==0.52.4
