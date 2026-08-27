@@ -39,7 +39,7 @@ LOCAL_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173"}
 
 
 class JobRequest(BaseModel):
-    stage: Literal["normalize"] = "normalize"
+    stage: Literal["normalize", "transcribe"] = "normalize"
 
 
 class ImportRequest(BaseModel):
@@ -150,7 +150,7 @@ def proxy(project_id: str):
 @router.post("/projects/{project_id}/jobs", status_code=202)
 def start_job(project_id: str, request: Request, body: JobRequest | None = None):
     guard_write(request)
-    return manager().start(project_id)
+    return manager().start(project_id, stage=body.stage if body else "normalize")
 
 
 @router.get("/projects/{project_id}/jobs/latest")
@@ -173,3 +173,9 @@ def cancel_job(project_id: str, job_id: str, request: Request):
 def retry_job(project_id: str, job_id: str, request: Request):
     guard_write(request)
     return manager().retry(project_id, job_id)
+
+
+@router.get("/projects/{project_id}/transcript")
+def transcript(project_id: str):
+    from python.transcription.engine import read_transcript
+    return read_transcript(PROJECTS, read_project(PROJECTS, project_id))

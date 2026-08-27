@@ -1,3 +1,6 @@
 # FastAPI supplies the API; Uvicorn runs it locally without optional extras.
 fastapi==0.141.1
 uvicorn==0.52.4
+
+# Phase 04 offline transcription provider; models acquired separately.
+faster-whisper==1.2.1

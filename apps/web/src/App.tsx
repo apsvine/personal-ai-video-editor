@@ -11,6 +11,8 @@ async function readResponse(response: Response) {
   return body;
 }
 
+type Transcript = { language: string; segments: { text: string }[] };
+
 type ApiStatus = 'Checking…' | 'Connected' | 'Disconnected';
 
 export default function App() {
@@ -23,12 +25,14 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [activeId, setActiveId] = useState<string | null>(() => localStorage.getItem('current-project'));
+  const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [job, setJob] = useState<Job | null>(null);
 
   useEffect(() => {
     if (!activeId) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let loaded = '';
     async function poll() {
       try {
         const body = await readResponse(await fetch(`${API}/projects/${activeId}/jobs/latest`, { signal: controller.signal })) as Job | null;
@@ -37,13 +41,21 @@ export default function App() {
         if (body) {
           const running = ['pending', 'running'].includes(body.status);
           setBusy(running);
-          setImportState(`${body.stage} — ${body.status}${body.reused ? ' — reused verified normalized assets' : ''}`);
-          if (body.status === 'succeeded' && body.result_project_id) {
-            const finished = await readResponse(await fetch(`${API}/projects/${body.result_project_id}`, { signal: controller.signal })) as Project;
-            const details = await readResponse(await fetch(`${API}/projects/${body.result_project_id}/metadata`, { signal: controller.signal })) as Metadata;
-            if (!controller.signal.aborted) { setProject(finished); setMetadata(details); }
-          }
-        } else {
+          setImportState(`${body.stage} — ${body.status}${body.reused ? ' — reused verified artifacts' : ''}`);
+        }
+        // Media readiness is independent of the latest job (which may be a failed transcription).
+        const source = await readResponse(await fetch(`${API}/projects/${activeId}`, { signal: controller.signal }));
+        const outputId = source.reused_project_id ?? source.project_id;
+        const finished = outputId === source.project_id ? source : await readResponse(await fetch(`${API}/projects/${outputId}`, { signal: controller.signal }));
+        const revision = `${outputId}:${body?.job_id}:${body?.status}`;
+        if (finished.normalization_status === 'completed' && revision !== loaded) {
+          const details = await readResponse(await fetch(`${API}/projects/${outputId}/metadata`, { signal: controller.signal })) as Metadata;
+          if (!controller.signal.aborted) { setProject(finished); setMetadata(details); }
+          const response = await fetch(`${API}/projects/${outputId}/transcript`, { signal: controller.signal });
+          const value = response.ok ? await response.json() as Transcript : null;
+          if (!controller.signal.aborted) { setTranscript(value); loaded = revision; }
+        }
+        if (!body) {
           const source = await readResponse(await fetch(`${API}/projects/${activeId}`, { signal: controller.signal }));
           if (!controller.signal.aborted) {
             setImportState(source.normalization_status.replaceAll('_', ' '));
@@ -58,7 +70,7 @@ export default function App() {
   }, [activeId]);
 
   async function importVideo(file: File) {
-    setActiveId(null); setJob(null);
+    setActiveId(null); setJob(null); setTranscript(null);
     setBusy(true); setFilename(file.name); setError(''); setProject(null); setMetadata(null);
     setImportState('Creating project…');
     try {
@@ -77,6 +89,21 @@ export default function App() {
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Import failed.');
       setImportState('Import failed.');
+      setBusy(false);
+    }
+  }
+
+  async function startTranscription() {
+    if (!activeId) return;
+    setError(''); setBusy(true);
+    try {
+      const next = await readResponse(await fetch(`${API}/projects/${activeId}/jobs`, {
+        method: 'POST', headers: { 'X-Media-Import': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage: 'transcribe' }),
+      })) as Job;
+      setJob(next);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Transcription request failed.');
       setBusy(false);
     }
   }
@@ -131,7 +158,7 @@ export default function App() {
   return (
     <main>
       <h1>Personal AI Video Editor</h1>
-      <p>Phase 03 — Persistent Job Pipeline and Crash Recovery</p>
+      <p>Phase 04 — Transcription Engine</p>
       <p role="status">API Status: {status}</p>
       <section aria-label="Video import">
         <label htmlFor="video-input">Import Video</label>
@@ -156,6 +183,11 @@ export default function App() {
           <p>Source: {metadata.width} × {metadata.height} · {metadata.duration_seconds.toFixed(2)} seconds
             {' · '}{metadata.frame_rate.toFixed(2)} fps · rotation {metadata.rotation_degrees}°</p>
           {project.audio_status === 'no_audio' && <p>No audio stream: video is ready; audio.wav was not created.</p>}
+          {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startTranscription()}>Transcribe</button>}
+          {transcript && <section aria-label="Transcript">
+            <p>Detected language: {transcript.language}</p>
+            <p className="transcript">{transcript.segments.length ? transcript.segments.map(s => s.text).join('') : 'No speech detected.'}</p>
+          </section>}
           <video key={project.project_id} controls preload="metadata" src={`${API}/projects/${project.project_id}/proxy`} />
         </>}
       </section>

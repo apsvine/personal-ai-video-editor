@@ -8,6 +8,8 @@ import traceback
 import uuid
 
 from python.media import normalization as n
+from python.transcription import engine as transcription
+from python.common.control import JobControl, job_context
 
 STAGES = ('normalize', 'transcribe', 'analyze', 'plan', 'render')
 RETRYABLE = ('failed', 'interrupted', 'cancelled')
@@ -89,7 +91,9 @@ class JobManager:
                     'code': 'backend_interrupted', 'message': 'Backend stopped before completion. Retry this job.'})
                 self.save(job)
 
-    def start(self, project_id, retry_of=None, reserved=False, runner=None):
+    def start(self, project_id, retry_of=None, reserved=False, runner=None, stage="normalize"):
+        if stage not in ("normalize", "transcribe"):
+            raise n.MediaError("unsupported_stage", "Only normalize and transcribe are supported.", 422)
         if not reserved:
             self.reserve()
         try:
@@ -97,16 +101,18 @@ class JobManager:
             source = n.safe_path(n.project_path(self.root, project_id), 'source', project['source']['filename'])
             if not source.is_file() or source.stat().st_size != project['source']['size_bytes']:
                 raise n.MediaError('source_not_ready', 'A complete source upload is required.', 409)
+            if stage == 'transcribe':
+                transcription.normalized_project(self.root, project)
             directory = n.safe_path(n.project_path(self.root, project_id), 'jobs')
             directory.mkdir(exist_ok=True)
             job = dict(schema_version=1, job_id=uuid.uuid4().hex, project_id=project_id,
-                       stage='normalize', status='pending', progress=0.0, created_at=now(),
+                       stage=stage, status='pending', progress=0.0, created_at=now(),
                        started_at=None, finished_at=None, error=None, log_path=None,
                        retry_of=retry_of, result_project_id=None, reused=False)
             job['log_path'] = f"logs/job-{job['job_id']}.log"
             n.safe_path(n.project_path(self.root, project_id), 'logs', f"job-{job['job_id']}.log").touch()
             self.save(job)
-            control = n.JobControl(self.lockfile.fileno(), lambda value: self.progress(job, value))
+            control = JobControl(self.lockfile.fileno(), lambda value: self.progress(job, value))
             with self.mutex:
                 self.active = (job, control)
                 self.thread = threading.Thread(target=self.execute, args=(job, control, runner), daemon=True)
@@ -129,9 +135,9 @@ class JobManager:
             with self.mutex:
                 job.update(status='running', started_at=now())
                 self.save(job)
-            with n.job_context(control):
+            with job_context(control):
                 control.check()
-                result = (runner or n.normalize)(self.root, n.read_project(self.root, job['project_id']))
+                result = (runner or (n.normalize if job["stage"] == "normalize" else transcription.transcribe))(self.root, n.read_project(self.root, job['project_id']))
             with self.mutex:
                 # Publication is the success boundary; a late cancel must not undo it.
                 job.update(status='succeeded', progress=1.0, result_project_id=result['project_id'],
@@ -140,9 +146,9 @@ class JobManager:
             log = n.safe_path(n.project_path(self.root, job['project_id']), *job['log_path'].split('/'))
             with log.open('a') as stream:
                 traceback.print_exc(file=stream)
-                stream.write('\nDetailed media command output: logs/media.log\n')
+                stream.write('\nDetailed tool output: logs/media.log or logs/transcription.log\n')
             with self.mutex:
-                failure = error if isinstance(error, n.MediaError) else n.MediaError('job_failed', 'Normalization failed. See the local job log.')
+                failure = error if isinstance(error, n.MediaError) else n.MediaError('job_failed', 'Job failed. See the local job log.')
                 job.update(status=('cancelled' if failure.code == 'cancelled' else
                                    'interrupted' if failure.code == 'backend_interrupted' else 'failed'), error=failure.result())
         finally:
@@ -166,7 +172,7 @@ class JobManager:
         job = self.read(project_id, job_id)
         if job['status'] not in RETRYABLE:
             raise n.MediaError('not_retryable', 'Only failed, interrupted or cancelled jobs can be retried.', 409)
-        return self.start(project_id, retry_of=job_id)
+        return self.start(project_id, retry_of=job_id, stage=job["stage"])
 
     def close(self):
         with self.mutex:

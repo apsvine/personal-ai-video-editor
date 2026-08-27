@@ -31,7 +31,9 @@ def main():
                         help="also require the Phase 01 development environment")
     parser.add_argument("--phase02", action="store_true",
                         help="require Phase 01 plus working FFmpeg and ffprobe")
+    parser.add_argument("--phase04", action="store_true", help="check offline transcription dependencies; model absence is a warning")
     args = parser.parse_args()
+    args.phase02 = args.phase02 or args.phase04
     args.phase01 = args.phase01 or args.phase02
     failures = []
 
@@ -90,6 +92,21 @@ def main():
         report("PASS" if (ROOT / "apps/web/node_modules/vite/package.json").is_file() else "FAIL",
                "Frontend dependencies", "run npm ci in apps/web if missing")
 
+    if args.phase04:
+        try:
+            installed = importlib.metadata.version("faster-whisper")
+            report("PASS" if installed == "1.2.1" else "FAIL", "faster-whisper", installed)
+        except importlib.metadata.PackageNotFoundError:
+            report("FAIL", "faster-whisper", "missing; install approved requirements")
+        sys.path.insert(0, str(ROOT))
+        from python.transcription.provider import require_model
+        from python.transcription.engine import model_path
+        try:
+            require_model(model_path(ROOT / "runtime/projects"))
+            report("PASS", "Local base model", "required files present; inference not tested")
+        except Exception:
+            report("WARN", "Local base model", "not installed/incomplete; separate approval required, no download attempted")
+
     for name in RUNTIME_NAMES:
         try:
             target = runtime_path(name)
@@ -114,7 +131,7 @@ def main():
         report("PASS" if present else "WARN", name,
                "set (value hidden)" if present else "unset; optional placeholder")
 
-    phase = "02" if args.phase02 else "01" if args.phase01 else "00"
+    phase = "04" if args.phase04 else "02" if args.phase02 else "01" if args.phase01 else "00"
     print(f"\n{'FAIL' if failures else 'PASS'} | Phase {phase} diagnostics complete")
     return 1 if failures else 0
 

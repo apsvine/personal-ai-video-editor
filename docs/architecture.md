@@ -1,4 +1,4 @@
-# Architecture — Phase 03 persistent jobs and future boundaries
+# Architecture — Phase 04 transcription and preserved persistent jobs
 
 Phase 00 established repository boundaries. Phase 01 implements only the local
 React + TypeScript + Vite status page and Python 3.11 + FastAPI health endpoint.
@@ -43,7 +43,7 @@ messages only. Job tracebacks and media command logs stay on disk. Progress is
 coarse stage completion, not an FFmpeg frame/time estimate.
 
 Writes require a custom header and reject foreign browser origins. Serve only
-on loopback. CORS is not local-user authentication. No dependencies were added;
+on loopback. CORS is not local-user authentication. Phase 03 added no dependencies;
 POSIX file locking makes Phase 03 macOS/Linux-only. `scripts/job_demo.py` is an
 explicit acceptance launcher adding a cancellable delay before normalization;
 it does not add production API routes or implement future stages.
@@ -75,3 +75,32 @@ Electron desktop packaging is deferred until pipeline stability. This avoids
 coupling foundational pipeline work to desktop lifecycle and distribution.
 Phase 00 introduced no application dependencies. Phase 01 adds only the
 frontend stack, FastAPI, Uvicorn, and HTTPX for tests; no Python media or AI dependencies. Phase 02 uses system FFmpeg/ffprobe only.
+
+## Phase 04 transcription
+
+The existing manager dispatches normalize/transcribe, defaults to normalize, and
+preserves stage on retry. Transcribe resolves reused imports to completed output
+projects, verifies source and all normalized checksums, and consumes only
+normalized/audio.wav. No normalization rerun occurs. A missing audio stream is a
+structured no_audio error; speech-free audio can produce an empty segments list.
+
+python/transcription/engine.py owns validation, cache identity and publication at
+analysis/transcript.json. provider.py adapts faster-whisper 1.2.1 to our schema.
+worker.py runs in a separate Python process, with offline Hub flags and a complete
+explicit local model directory. No model download function is used in production.
+The parent owns publication; the child only writes an attempt's temporary result.
+
+python/common/control.py holds the extracted Phase 03 control context and new
+worker runner. python/common/errors.py holds the compatible structured error.
+Normalization re-exports the existing interfaces; media commands are unchanged.
+The worker inherits the heavy lock; cancellation/shutdown terminates, waits two
+seconds, then kills/reaps. Worker timeout is one hour. Startup interrupts abandoned
+jobs; retries validate a published transcript before invoking inference. A surviving
+orphan cannot publish a transcript, and retains the lock until exit. Hard-crash
+attempt files may remain for manual cleanup while idle.
+
+The CLI uses the same manager and engine, requires the backend stopped, and never
+downloads. UI readiness derives from project normalization, not the latest job;
+failed transcription does not hide the proxy. Transcript fetching occurs on job
+state changes rather than repeatedly hashing media on every polling tick.
+Only a button, status/progress, language, and read-only plain text are added.
