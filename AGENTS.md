@@ -3,7 +3,7 @@
 - Read `README.md` and this file before any modification.
 - Inspect the repository, Git status, and relevant files before editing.
 - Identify the files to change and keep changes within the requested scope.
-- Implement exactly one requested phase per task. Current phase: **03**.
+- Implement exactly one requested phase per task. Current phase: **04**.
 - Never silently implement future phases; stop when the requested phase is complete.
 - Do not refactor unrelated files or overwrite user changes.
 - Add no dependency without an explicit justification; prefer the standard library.
@@ -17,7 +17,7 @@
   and anything the user must manually verify.
 - Do not commit or push unless explicitly requested.
 
-## Phase 01 boundary
+## Historical Phase 01 boundary (superseded only by approved Phases 02–04)
 
 Preserve all Phase 00 utilities and checks. Phase 01 adds only a local React +
 TypeScript + Vite status page and Python 3.11 + FastAPI `GET /health` API.
@@ -29,3 +29,12 @@ Do not implement uploads, video import/preview, processing, transcription,
 AI, captions, rendering, authentication, databases, or desktop packaging.
 Do not install media libraries, Remotion, Electron, or AI SDKs. Stop at Phase 01;
 future architecture documentation does not authorize later implementation.
+
+## Phase 04 boundary
+
+Only normalize/transcribe jobs execute. Canonical transcript: analysis/transcript.json.
+Use faster-whisper==1.2.1, multilingual base, CPU INT8. No model acquisition during
+startup/import/tests/doctor. Acquisition is a separate explicit user approval.
+Shared controls belong in python/common; normalization keeps compatible imports.
+No Phase 05 features, other providers, diarization, captions, editing, or rendering.
+Run all existing checks and --phase04 doctor. Missing model is WARN, not FAIL.

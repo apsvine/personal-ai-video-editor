@@ -11,22 +11,15 @@ import re
 import shutil
 import subprocess
 import uuid
-import threading
 import time
-from contextlib import contextmanager
 
 SCHEMA = 1
 CONFIG = "h264-aac-720-fit-cfr30-mono16k-v1"
 RESERVE = 256 * 1024 * 1024
 
 
-class MediaError(Exception):
-    def __init__(self, code, message, status=400, **details):
-        super().__init__(message)
-        self.code, self.message, self.status, self.details = code, message, status, details
-
-    def result(self):
-        return {"code": self.code, "message": self.message, **self.details}
+from python.common.errors import MediaError
+from python.common.control import JobControl, job_context, checkpoint, _CONTROL
 
 
 def safe_path(root, *parts):
@@ -126,39 +119,6 @@ def create_project(root, filename, size, modified=None):
     (path / "logs/media.log").write_text("Project created; awaiting source upload.\n")
     save_project(path, project, "awaiting_upload")
     return project
-
-
-_CONTROL = threading.local()
-
-
-class JobControl:
-    def __init__(self, lock_fd, progress):
-        self.lock_fd = lock_fd
-        self.progress = progress
-        self.cancel = threading.Event()
-        self.shutdown = threading.Event()
-
-    def check(self):
-        if self.shutdown.is_set():
-            raise MediaError("backend_interrupted", "Backend stopped before completion. Retry this job.", 409)
-        if self.cancel.is_set():
-            raise MediaError("cancelled", "Normalization was cancelled.", 409)
-
-
-@contextmanager
-def job_context(control):
-    _CONTROL.value = control
-    try:
-        yield
-    finally:
-        del _CONTROL.value
-
-
-def checkpoint(value):
-    control = getattr(_CONTROL, "value", None)
-    if control:
-        control.check()
-        control.progress(value)
 
 
 def controlled_tool(command, log, control):

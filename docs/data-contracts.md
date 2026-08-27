@@ -1,4 +1,4 @@
-# Phase 03 data contracts (preserving Phase 02 artifacts)
+# Phase 04 data contracts (preserving Phase 02/03 artifacts)
 
 All implemented JSON schemas use integer `schema_version: 1`. Files live at
 `runtime/projects/<32 lowercase hex characters>/`; runtime is never tracked.
@@ -51,8 +51,8 @@ expected output checksum; source/output corruption invalidates the cache.
 ## Future contracts (not implemented)
 
 Later stages should use versioned JSON artifacts, explicit provenance and input
-identity, atomic publication and scoped invalidation. No transcription, edit
-plan, captions, rendering or provider payload schema is implemented.
+identity, atomic publication and scoped invalidation. No edit plan, captions or rendering schema is implemented. The Phase 04 transcript
+schema is below.
 
 ## jobs/<job-id>.json (Phase 03)
 
@@ -60,7 +60,7 @@ Each job ID is 32 lowercase hexadecimal characters. All records contain:
 
 - `schema_version: 1`, `job_id`, `project_id` (the retained source project).
 - `stage`: contract names `normalize`, `transcribe`, `analyze`, `plan`, `render`.
-  Only `normalize` can be created/executed today; other names have no handlers.
+  Only `normalize` and `transcribe` can execute; other names have no handlers.
 - `status`: `pending`, `running`, `succeeded`, `failed`, `cancelled`, `interrupted`.
 - `progress`: finite numeric value in [0.0, 1.0]; 1.0 on success.
   Milestones: 0 pending, .05 setup/hash/cache, .15 probe, .25 proxy, .65 audio,
@@ -97,5 +97,61 @@ Latest-job lookup returns the newest `created_at`, or JSON null. Upload with
 `?background=true` returns a job and HTTP 202 once source persistence completes;
 the default synchronous response still returns the completed/cached project.
 All job writes require the same local-origin/custom-header guard as uploads.
-Unsupported future stages cannot be requested. Busy operations return
+Unsupported future stages cannot be requested. Requests default to normalize;
+`{"stage":"transcribe"}` selects transcription. Retry preserves the stage. Busy operations return
 `{error: {code: "job_busy", message: "..."}}` with HTTP 409 and no queued job.
+
+## analysis/transcript.json (Phase 04)
+
+The directory is created on demand on the completed output project, including
+when requested via a reused import. This artifact is independent of project.json's
+normalization commit marker. The old transcript survives any failed replacement.
+Publication is a flushed/fsynced unique sibling followed by atomic replacement.
+
+- schema_version: integer 1.
+- content_checksum: SHA-256 of canonical sorted compact JSON excluding this field;
+  detects accidental content corruption (not a security signature).
+- language: provider-detected language code.
+- timing_quality: "model_estimated_word_alignment". Word boundaries come from
+  Whisper alignment, not interpolated segment divisions. They are estimates, not
+  guaranteed frame/sample-accurate boundaries. No rounding or synthetic confidence.
+- source: audio_checksum (SHA-256 of normalized/audio.wav), source_checksum
+  (SHA-256 of the original uploaded source).
+- provider: name "faster-whisper", version "1.2.1", model "base", model_checksum
+  (SHA-256 over sorted local model filenames and their SHA-256 digests), settings.
+- settings: device cpu, compute_type int8, cpu_threads 4, num_workers 1,
+  beam_size 5, word_timestamps true, vad_filter false.
+- segments: ordered objects with start/end seconds relative to normalized audio,
+  text, confidence null, and words. Each word has text/start/end/confidence; word
+  confidence is the provider's word probability, not a calibrated accuracy claim.
+  Segment average log probability is deliberately not represented as confidence.
+- Empty segments is a valid no-speech result, distinct from a video without audio.
+
+All intervals must be finite, nonnegative, ordered, contained in their parent and
+within audio duration. Nonempty speech segments require words. Invalid outputs
+fail instead of silently clamping or manufacturing alignment. Cache identity
+includes schema/source/provider/version/model content/settings. Cache hits validate
+the artifact and do not construct a model; model files are still hashed. Missing
+local models are setup errors, even when an older transcript remains readable.
+Transcription never changes normalized output checksums or removes old transcripts.
+
+API: POST /projects/{id}/jobs with {"stage":"transcribe"} returns 202; existing
+job read/latest/cancel/retry endpoints apply. GET /projects/{id}/transcript returns
+the validated artifact or structured transcript_not_ready (404). Normalization
+prerequisite errors use 409. All writes retain the existing local-origin/header guard.
+The transcript read endpoint checks source integrity but can return a prior valid
+transcript after a failed attempt with different settings; its provenance is included.
+
+Progress is coarse: .05 prerequisite verification, .15 inference, .90 validation
+and publication, 1 success. It is not a time estimate; it can remain at .15 for the
+whole inference. Retry starts fresh inference unless a valid published cache exists.
+
+### Aligned segment envelopes
+
+Before publication, internal segment start is the minimum of the provider segment
+start and all aligned word starts; end is the maximum of the provider segment end
+and all aligned word ends. Word timestamps/confidences are preserved verbatim.
+Wordless segments retain provider bounds and existing validation requirements.
+No padding, clamping, tolerance or synthetic timing is added. Strict finite,
+nonnegative, duration-bound, interval and cross-segment ordering checks still apply
+after envelope derivation. Invalid or overlapping final intervals still fail.

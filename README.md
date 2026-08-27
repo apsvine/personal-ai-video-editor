@@ -1,9 +1,8 @@
 # Personal AI Video Editor
 
 A private, local-first AI video editing application for one user. V1 will
-target talking-head vertical videos. The current phase is **Phase 03: Persistent Job Pipeline and Crash Recovery**
-(approved; manual acceptance passed), built on approved Phase 02 media
-normalization and the preserved Phase 00 foundation. It is not a video editor yet.
+target talking-head vertical videos. The current phase is **Phase 04: Transcription Engine** (manual acceptance passed), built on approved Phase 03 persistent
+jobs, Phase 02 normalization and the preserved Phase 00 foundation. It is not a video editor yet.
 
 ## North-star workflow
 
@@ -15,7 +14,7 @@ This is a future workflow, not functionality available today.
 
 React + TypeScript + Vite provide a minimal local status page, with a Python
 3.11 + FastAPI backend providing health and local media import APIs. System
-FFmpeg/ffprobe normalize one imported video; a future transcription provider
+FFmpeg/ffprobe normalize one imported video; an offline transcription provider
 abstraction and Python edit planner will produce reusable JSON artifacts.
 Remotion rendering comes later. Electron packaging comes only after the
 pipeline is stable. The status page, health API, import, normalization, and proxy preview are implemented.
@@ -74,7 +73,7 @@ Python version is your system default. Phase 02 requires system `ffmpeg` and
 `ffprobe` on the backend PATH, with `libx264`, AAC and PCM encoders. Install them
 yourself using a trusted system package manager; the application never installs
 them. The health shell still works without them. No models, API keys, or database
-are needed. Package downloads need network access; running the installed shell
+are needed for import/normalization. Transcription requires a separately acquired local model. Package downloads need network access; running the installed shell
 uses only local connections.
 
 From the repository root (macOS/Linux):
@@ -103,7 +102,7 @@ npm --prefix apps/web run dev
 ```
 
 Open <http://127.0.0.1:5173>. The page displays the project title,
-“Phase 03 — Persistent Job Pipeline and Crash Recovery”, and “API Status: Connected” when the API returns
+“Phase 04 — Transcription Engine”, and “API Status: Connected” when the API returns
 the expected JSON. It starts at “Checking…” and shows “Disconnected” for
 network errors, timeouts, non-success responses, or unexpected JSON. Each
 request times out after three seconds; another check follows five seconds
@@ -157,7 +156,8 @@ no sidebar, timeline, or editing controls.
 
 Dependencies are deliberately limited: React/React DOM for the UI;
 TypeScript, React types, Vite and its React plugin for local development/build;
-FastAPI for the API; Uvicorn without extras for the server; HTTPX for tests.
+FastAPI for the API; Uvicorn without extras for the server; HTTPX for tests;
+faster-whisper 1.2.1 and its required transitive dependencies for transcription.
 Frontend resolutions are recorded in `package-lock.json`; direct Python
 dependencies are pinned in the requirements files, while transitive Python
 dependencies are resolved by pip.
@@ -194,7 +194,7 @@ with other processes writing temporary files.
 `.env.example` is a safe placeholder; copying it is optional. No Python utility
 loads `.env` automatically. Vite follows its standard environment-file loading
 behavior; never put secrets in frontend `VITE_*` variables. The shell needs no environment variables or credentials;
-provider configuration is deferred to a later phase.
+transcription model configuration is described below.
 
 ## Development philosophy
 
@@ -206,10 +206,9 @@ must require an explicit user choice. Do not assume prior chat context.
 
 ## Explicitly not built yet
 
-There is no transcription, AI functionality, edit planning,
-captions, rendering, database, authentication, or desktop packaging.
+There is no edit planning, captions, rendering, database, authentication, or desktop packaging.
 Remotion and Electron are not installed. No models or media are bundled.
-Phase 04 and later functionality is deliberately excluded.
+Phase 05 and later functionality is deliberately excluded.
 
 ## Phase 02 behavior and API
 
@@ -336,9 +335,8 @@ that upload, which is not resumable. Re-import an incomplete upload.
 | POST | `/projects/{id}/jobs/{job_id}/cancel` | Request cancellation; 202, poll for terminal status |
 | POST | `/projects/{id}/jobs/{job_id}/retry` | New linked attempt for failed/interrupted/cancelled job; 202 |
 
-All writes retain `X-Media-Import: 1` and local-origin protection. There is no
-stage selection: only normalization can execute. Future stage names are contracts
-only. No queue, database, AI, or new dependency is introduced.
+All writes retain `X-Media-Import: 1` and local-origin protection. Phase 03 originally supported only normalization. Phase 04 adds explicit transcribe
+stage selection; analyze, plan and render remain rejected. There is no queue or database.
 
 Lifecycle: pending → running → succeeded / failed / cancelled / interrupted.
 Startup converts abandoned pending/running records to interrupted. Graceful
@@ -409,3 +407,95 @@ Automated coverage includes simulated and real process interruption, actual
 subprocess cancellation/reaping, exclusion across managers, graceful shutdown,
 API recovery, retry lineage, atomic JSON failure, partial-output cleanup, and
 preservation of successful cached assets, alongside all existing Phase 02 tests.
+
+## Phase 04 — offline transcription
+
+After normalization completes with audio, click **Transcribe**. The existing
+persisted job controls show progress, Cancel and Retry. On success the UI shows
+detected language and plain read-only text. Proxy playback stays available after
+transcription failure or refresh. There is no highlighting, word interaction,
+editing, captions, timeline, or Phase 05 analysis.
+
+The only added direct dependency is `faster-whisper==1.2.1`; install using the
+existing requirements command. Its required transitive dependencies include
+CTranslate2, PyAV, tokenizers, Hugging Face Hub and ONNX Runtime. No additional
+provider or ML framework is explicitly added. The base speech model is separate.
+
+Default model directory: `runtime/cache/transcription/faster-whisper/base/`.
+Override with `PERSONAL_AI_VIDEO_EDITOR_MODEL_PATH=/absolute/local/model/path`
+when launching backend/CLI/doctor. The path must contain a complete CTranslate2
+multilingual base model: model.bin, config.json, tokenizer.json, vocabulary.txt.
+The provider loads only this local path and uses CPU INT8 with four threads and
+one worker. Missing files produce `model_not_installed`; no automatic downloads.
+
+### Separate model acquisition — DO NOT run without approval
+
+The following is the proposed explicit future step, **not run during Phase 04
+implementation/testing**. From the repository root, after separate approval:
+
+```sh
+HF_HOME="$PWD/runtime/cache/transcription/faster-whisper/hub" .venv/bin/python -c 'from huggingface_hub import snapshot_download; snapshot_download("Systran/faster-whisper-base", local_dir="runtime/cache/transcription/faster-whisper/base", allow_patterns=["model.bin", "config.json", "tokenizer.json", "vocabulary.txt"], token=False)'
+```
+
+This deliberately needs network access; application execution does not. All model
+files/cache stay under ignored runtime. No credentials or external processing of
+recordings is required. The transcript records a content fingerprint of the local
+model; replacing model files or changing settings causes a cache miss.
+
+### API and CLI
+
+POST `/projects/{id}/jobs` with `{"stage":"transcribe"}` and `X-Media-Import: 1`
+starts transcription. Existing latest/read/cancel/retry endpoints work unchanged.
+GET `/projects/{id}/transcript` returns the internal transcript JSON. The canonical
+artifact is `runtime/projects/<completed-output-project-id>/analysis/transcript.json`.
+Reused imports resolve to that output project. Retry never silently normalizes.
+
+Stop the backend before the debug CLI (the same lifetime lock protects recovery):
+
+```sh
+.venv/bin/python scripts/transcribe_project.py <project-id>
+.venv/bin/python scripts/doctor.py --phase04
+```
+
+CLI jobs use the same engine/store, log and retry semantics as API jobs. Ctrl+C
+cancels the CLI job. Doctor checks dependencies/local model files without inference,
+and reports missing model as WARN rather than FAIL. It never acquires models.
+
+### Verification and real-model acceptance
+
+Run the foundation smoke test, full backend suite, frontend build, default doctor,
+--phase01, --phase02, --phase04, and git diff --check. Unit tests use mock providers
+and synthetic PCM; no real speech model is loaded. Existing Phase 02 real-media
+and Phase 03 process-crash tests remain enabled.
+
+Only after separate model approval/acquisition: import a small private spoken clip,
+transcribe, inspect language/text/word boundaries against speech, and inspect the
+canonical JSON. Refresh during inference and after success. Repeat transcription
+and confirm cache reuse with unchanged artifact bytes. Try cancel/retry, graceful
+restart and hard-kill recovery on a longer clip, verifying normalized asset hashes
+and the prior transcript remain unchanged after failure. Test a video without an
+audio track and an audio track containing silence. Stop the backend and run the
+CLI against the same project; it should reuse the transcript. Do not commit runtime.
+
+Limitations: model timing/recognition is approximate; multilingual/code-switching
+accuracy needs manual assessment. Silence may hallucinate speech (VAD is disabled).
+Strict timestamp validation rejects invalid alignment rather than inventing precision.
+Progress is coarse, inference timeout is one hour, and full source/model hashing
+can take time and is not instantly cancellable. No incremental inference resume.
+Manual acceptance confirmed usable real-speech output. Broader language/technical-term
+quality and systematic CPU/memory benchmarks remain future tuning observations.
+
+### Phase 04 acceptance
+
+Phase 04 manual acceptance passed: local base-model transcription, usable text,
+language detection, genuine word timing, aligned segment envelopes, browser
+refresh, validated cache reuse, cancellation persistence, retry lineage,
+interruption/recovery, prior-transcript preservation, readable no-audio failure,
+and preserved Phase 02 normalization/Phase 03 jobs were confirmed by the user.
+
+The segment-envelope fix preserves every word timestamp and expands only its
+internal parent segment before strict validation. The complete backend suite now
+contains 54 tests, including the exact real-world timing regression. CPU/INT8,
+four threads and VAD disabled remain the baseline. Models, source media,
+normalized outputs, transcripts, jobs and logs remain ignored runtime data.
+No Phase 05 implementation is included.
