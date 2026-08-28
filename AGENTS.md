@@ -3,7 +3,7 @@
 - Read `README.md` and this file before any modification.
 - Inspect the repository, Git status, and relevant files before editing.
 - Identify the files to change and keep changes within the requested scope.
-- Implement exactly one requested phase per task. Current phase: **05**.
+- Implement exactly one requested phase per task. Current phase: **06**.
 - Never silently implement future phases; stop when the requested phase is complete.
 - Do not refactor unrelated files or overwrite user changes.
 - Add no dependency without an explicit justification; prefer the standard library.
@@ -30,7 +30,7 @@ AI, captions, rendering, authentication, databases, or desktop packaging.
 Do not install media libraries, Remotion, Electron, or AI SDKs. Stop at Phase 01;
 future architecture documentation does not authorize later implementation.
 
-## Phase 04 boundary
+## Historical Phase 04 boundary (superseded by approved Phases 05–06)
 
 Only normalize/transcribe jobs execute. Canonical transcript: analysis/transcript.json.
 Use faster-whisper==1.2.1, multilingual base, CPU INT8. No model acquisition during
@@ -38,3 +38,13 @@ startup/import/tests/doctor. Acquisition is a separate explicit user approval.
 Shared controls belong in python/common; normalization keeps compatible imports.
 No Phase 05 features, other providers, diarization, captions, editing, or rendering.
 Run all existing checks and --phase04 doctor. Missing model is WARN, not FAIL.
+
+## Phase 06 boundary
+
+Only normalize/transcribe/analyze jobs execute. Smart Cuts writes analysis/cuts.json
+and overrides/user_cuts.json, plus normal jobs/logs. Generated proposal topology
+is separate from effective accepted-only topology. Never change source, normalized
+media, raw transcript or transcript overrides. No rendering, destructive trimming,
+plan/render job handlers, Phase 07 or new models. Commits, pushes, merges and tags
+require explicit user authorization; Phase 06 finalization has that authorization.
+Run the complete existing verification matrix plus cut, mapping and browser tests.

@@ -39,7 +39,7 @@ LOCAL_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173"}
 
 
 class JobRequest(BaseModel):
-    stage: Literal["normalize", "transcribe"] = "normalize"
+    stage: Literal["normalize", "transcribe", "analyze"] = "normalize"
 
 
 class ImportRequest(BaseModel):
@@ -232,3 +232,50 @@ def reset_transcript(project_id: str, body: TranscriptIdentity, request: Request
 @router.post('/projects/{project_id}/transcript/overrides/{segment_id}/reset')
 def reset_transcript_segment(project_id: str, segment_id: str, body: TranscriptIdentity, request: Request):
     return write_review(project_id, body, request, segment_id=segment_id, reset=True)
+
+
+class CutIdentity(BaseModel):
+    model_config = {'extra': 'forbid'}
+    source_cuts_checksum: str = Field(strict=True, pattern=r'^[a-f0-9]{64}$')
+
+
+class CutDecision(CutIdentity):
+    action: Literal['accept', 'reject']
+
+
+@router.get('/projects/{project_id}/cuts')
+def get_cuts(project_id: str):
+    from python.editing.cuts import read_cuts
+    return read_cuts(PROJECTS, read_project(PROJECTS, project_id))
+
+
+@router.get('/projects/{project_id}/cuts/review')
+def get_cut_review(project_id: str):
+    from python.editing.cut_review import get_review
+    return get_review(PROJECTS, project_id)
+
+
+def write_cut_review(project_id, body, request, **kwargs):
+    from python.editing.cut_review import change_review
+    guard_write(request)
+    jobs = manager()
+    jobs.reserve()
+    try:
+        return change_review(PROJECTS, project_id, body.source_cuts_checksum, **kwargs)
+    finally:
+        jobs.release()
+
+
+@router.put('/projects/{project_id}/cuts/overrides/{cut_id}')
+def edit_cut(project_id: str, cut_id: str, body: CutDecision, request: Request):
+    return write_cut_review(project_id, body, request, cut_id=cut_id, action=body.action)
+
+
+@router.post('/projects/{project_id}/cuts/overrides/reset')
+def reset_cuts(project_id: str, body: CutIdentity, request: Request):
+    return write_cut_review(project_id, body, request, reset=True)
+
+
+@router.post('/projects/{project_id}/cuts/overrides/{cut_id}/reset')
+def reset_cut(project_id: str, cut_id: str, body: CutIdentity, request: Request):
+    return write_cut_review(project_id, body, request, cut_id=cut_id, reset=True)

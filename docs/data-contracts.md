@@ -1,4 +1,4 @@
-# Phase 05 data contracts (preserving Phase 02–04 artifacts)
+# Phase 06 data contracts (preserving Phase 02–05 artifacts)
 
 All implemented JSON schemas use integer `schema_version: 1`. Files live at
 `runtime/projects/<32 lowercase hex characters>/`; runtime is never tracked.
@@ -51,7 +51,7 @@ expected output checksum; source/output corruption invalidates the cache.
 ## Future contracts (not implemented)
 
 Later stages should use versioned JSON artifacts, explicit provenance and input
-identity, atomic publication and scoped invalidation. No edit plan, captions or rendering schema is implemented. The Phase 04 transcript
+identity, atomic publication and scoped invalidation. Only the Phase 06 silence proposal schema below is implemented; captions and rendering remain future work. The Phase 04 transcript
 schema is below.
 
 ## jobs/<job-id>.json (Phase 03)
@@ -60,7 +60,7 @@ Each job ID is 32 lowercase hexadecimal characters. All records contain:
 
 - `schema_version: 1`, `job_id`, `project_id` (the retained source project).
 - `stage`: contract names `normalize`, `transcribe`, `analyze`, `plan`, `render`.
-  Only `normalize` and `transcribe` can execute; other names have no handlers.
+  Only `normalize`, `transcribe` and `analyze` can execute; `plan` and `render` have no handlers.
 - `status`: `pending`, `running`, `succeeded`, `failed`, `cancelled`, `interrupted`.
 - `progress`: finite numeric value in [0.0, 1.0]; 1.0 on success.
   Milestones: 0 pending, .05 setup/hash/cache, .15 probe, .25 proxy, .65 audio,
@@ -240,3 +240,125 @@ end-of-transcript have no active segment. Seeking never writes transcript data.
 Missing/invalid word lists use segment-only seeking; Phase 04 still rejects speech
 segments without alignment. Corrected text uses segment seeking, while original
 ASR words remain available separately. No new alignment is inferred from edits.
+
+
+## analysis/cuts.json (Phase 06)
+
+The exact top-level structure is shown below (hashes/values are illustrative):
+
+```json
+{
+  "schema_version": 1,
+  "project_id": "<completed-output-project-id>",
+  "source": {
+    "source_checksum": "<source SHA-256>",
+    "audio_checksum": "<WAV SHA-256>",
+    "transcript_checksum": "<raw transcript content_checksum>",
+    "timing_checksum": "<canonical segment/word interval SHA-256>"
+  },
+  "source_duration": 10.0,
+  "audio_duration": 10.0,
+  "audio_offset": 0.0,
+  "settings": {"threshold_db": -40, "min_silence": 0.8, "padding": 0.2, "min_cut": 0.3},
+  "planner": "silence-word-protection-v1",
+  "detector": {"name": "ffmpeg.silencedetect", "version": "<ffmpeg -version first line>"},
+  "time_basis": "normalized_proxy_seconds",
+  "topology_scope": "proposal",
+  "candidates": [{
+    "cut_id": "<deterministic SHA-256>",
+    "start": 2.2, "end": 3.8, "reason": "silence",
+    "silence_start": 2.0, "silence_end": 4.0
+  }],
+  "keep": [{"start": 0.0, "end": 2.2}, {"start": 3.8, "end": 10.0}],
+  "removed": [{"start": 2.2, "end": 3.8}],
+  "warnings": ["ASR timing is estimated. Listen at every proposed boundary before accepting."],
+  "content_checksum": "<canonical JSON SHA-256 excluding this field>"
+}
+```
+
+All candidate/keep/removed times are half-open intervals in seconds on the original
+normalized proxy timeline. `silence_start`/`silence_end` are detector evidence in
+WAV time, before adding `audio_offset`. The raw transcript also remains in WAV time.
+`source_duration` is the proxy presentation duration, not source container duration.
+`audio_duration` is exact WAV frame count / 16000. Bounds are finite and positive;
+interval sets are sorted, non-overlapping and cover the full source domain together.
+Candidate endpoints round inward to microseconds, never out into protected speech.
+Empty proposals mean `removed: []` and full-duration `keep`. No-speech raw transcripts
+add a human-review warning; they never trigger automatic acceptance.
+
+**Proposal topology is not an approved effective timeline.** Generated `removed`
+contains all candidate intervals and generated `keep` is its deterministic complement.
+No future consumer needs to reconstruct this topology from opaque metadata, but it
+must use the review/effective plan when honoring user decisions.
+
+`cut_id` hashes canonical sorted compact JSON containing the full planner identity
+(all top-level fields through `topology_scope`, including source hashes, timing hash,
+settings, versions, durations, offset and output project ID) plus candidate start/end.
+No UUID or wall-clock field participates. The timing hash uses raw segment envelopes
+and word start/end arrays, without text. The full transcript checksum also binds
+provenance/text/confidence, conservatively invalidating plans if any raw content changes.
+Phase 05 text overrides never participate. Identical inputs/settings yield identical
+IDs, topology and artifact bytes. Input/settings/tool/planner changes invalidate cache.
+
+Read validation checks normalized source/output hashes and the validated raw
+transcript, then reconstructs candidate IDs, protection and topology from recorded
+evidence. Corrupt or stale generated artifacts return `cuts_not_ready` (404).
+Regeneration may atomically replace a prior artifact for changed inputs; failed
+replacement preserves it. After publication, review decisions never modify it.
+There is no implicit in-place acceptance flag, duplicated effective artifact or render.
+
+## overrides/user_cuts.json (Phase 06)
+
+Exactly these keys are accepted:
+
+```json
+{
+  "schema_version": 1,
+  "project_id": "<completed-output-project-id>",
+  "source_cuts_checksum": "<generated content_checksum>",
+  "decisions": {"<64 lowercase hexadecimal cut_id>": {"action": "accept"}}
+}
+```
+
+Version must be integer 1, not boolean. IDs/checksums use lowercase SHA-256 hex.
+Actions are only `accept` and `reject`; no timestamps or other fields are allowed.
+Only decisions are persisted, and missing entries mean pending. Reset removes an
+entry; reset-all or removing the last entry unlinks this one override file. Source,
+proxy, audio, transcript and transcript overrides are never changed by these APIs.
+
+The raw GET `/projects/{id}/cuts` is independent of decision validity. GET
+`/projects/{id}/cuts/review` returns exactly `schema_version`, `project_id`,
+`source_cuts_checksum`, `override_state`, `override_message`, `warnings`, `candidates`
+and `effective`. Each candidate retains generated fields plus `decision`
+(`pending`, `accept`, `reject`). `override_state` is `none`, `applied`, `stale`, or
+`invalid`; stale/invalid states return a diagnostic and withhold all decisions.
+Only current explicit accepts enter `effective.removed`; pending/rejected remain kept.
+
+`effective` contains `source_duration`, `effective_duration`, `time_removed`, `keep`,
+`removed` and `mapping`. Each mapping entry contains `original_start`, `original_end`,
+`edited_start`, `edited_end`. These are derived in memory, not a third persisted file.
+With zero accepted cuts, the effective map is identity and removed time is zero.
+
+Writes use the checksum-bound PUT/reset API described in README. Unknown candidates
+and malformed requests return 422; outdated checksums return 409 `cuts_changed`;
+stale/invalid decision files block per-candidate writes with 409 until Reset All.
+Reset All uses current generated identity and can discard malformed/stale decisions.
+Missing guards/foreign origins return 403; busy reservation returns 409 `job_busy`;
+storage failure returns 500 `cut_override_write_failed`. Same-candidate saves are
+last-successful-save-wins; different-candidate saves preserve each other's decisions.
+External file mutation while a backend runs is unsupported. No migration is implied.
+
+### Pure Python time mapping
+
+`python.editing.cuts.mapping(duration, removed)` derives retained spans and offsets.
+`original_to_edited(duration, removed, time)` returns either
+`{"removed": false, "edited_time": number}` or
+`{"removed": true, "splice_time": number}`. It never claims a removed timestamp
+survived. `edited_to_original(duration, removed, time)` returns `{"original_time": number}`.
+At an internal splice the inverse chooses the next retained interval (right-continuous).
+At the final edited endpoint it returns original duration, including trailing removals.
+For a fully removed generic timeline, the only edited time 0 maps to original duration;
+normal silence proposals retain edge padding. Negative, nonfinite, boolean and
+out-of-range query times are rejected. Adjacent removal intervals are supported.
+Round trips apply within retained intervals; removed spans collapse and are not invertible.
+This logic has no frontend dependency and performs no media operation.

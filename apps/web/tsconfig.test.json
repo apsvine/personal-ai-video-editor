@@ -8,6 +8,9 @@
   "include": [
     "src/transcript.ts",
     "src/TranscriptReview.tsx",
-    "tests/review.browser.tsx"
+    "tests/review.browser.tsx",
+    "src/cuts.ts",
+    "src/CutReview.tsx",
+    "tests/cuts.browser.tsx"
   ]
 }

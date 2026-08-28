@@ -1,4 +1,4 @@
-# Architecture — Phase 05 transcript review and preserved pipeline
+# Architecture — Phase 06 smart-cut planning and preserved pipeline
 
 Phase 00 established repository boundaries. Phase 01 implements only the local
 React + TypeScript + Vite status page and Python 3.11 + FastAPI health endpoint.
@@ -147,3 +147,40 @@ low word-probability tooltip remain understated. All original timing is retained
 Node's built-in runner and React server rendering provide dependency-free tests.
 A separate Vite browser harness exercises real DOM event handlers with mock HTTP
 and media time; backend integration tests cover actual disk/API persistence.
+
+
+## Phase 06 conservative cut planning
+
+`python/audio_features/silence.py` invokes the existing cancellable FFmpeg runner
+on verified normalized WAV, with null output and attempt-specific detector logs.
+It probes timestamp alignment and accounts for supported source audio offsets and
+AAC priming; uncertain timing is refused rather than silently treated as zero.
+`python/editing/cuts.py` owns versioned input identity, speech protection,
+deterministic candidate IDs, proposal topology, validation, atomic publication,
+cache reuse and pure original/edited timeline mapping. No media is ever written.
+The parent Python process alone publishes; a surviving FFmpeg process can write
+only its log and retains the inherited heavy lock until it exits.
+
+The existing Phase 03 manager dispatches `analyze` to the planner without changing
+job formats, retries, locks or recovery. `plan` and `render` remain unsupported.
+The Phase 04 normalized-input/read-transcript helpers are reused without changing
+their validation contract. They resolve reused imports to completed output projects.
+Only generated cuts, sparse cut decisions and normal jobs/logs are written.
+
+`python/editing/cut_review.py` follows the Phase 05 sparse-overlay architecture.
+The generated artifact always contains explicit proposal keep/removed intervals;
+review constructs a separate accepted-only effective topology and mapping in memory.
+Decisions cannot change proposal intervals or raw speech timing. All decision writes
+share the existing heavy reservation, revalidate checksums under lock, and use
+atomic JSON replacement. Stale/malformed decisions are never applied; Reset All
+uses the current generated identity to clear them explicitly. Same-candidate
+multi-client writes are last-successful-save-wins. No semantic migration is attempted.
+
+`App.tsx` starts analyze through existing job controls. `CutReview.tsx` is a small
+section composed inside `TranscriptReview.tsx`, sharing its original-time seek
+callback without taking ownership of video playback. It loads on job revisions,
+remount or explicit reload. It shows pending/accepted/rejected proposals and
+estimated original/effective/removed durations supplied by Python. No edit timeline,
+auto-skipping, rendering, localStorage decision cache or client-side mapping engine
+is introduced. The Phase 05 browser mock explicitly responds to the new optional
+cut route without changing transcript tests.

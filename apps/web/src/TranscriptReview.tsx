@@ -1,3 +1,4 @@
+import CutReview from './CutReview.js';
 import { useEffect, useRef, useState } from 'react';
 import { activeSegment, seekVideo, timedWords } from './transcript.js';
 import type { Review, Segment } from './transcript.js';
@@ -139,5 +140,6 @@ export default function TranscriptReview({ projectId, revision, busy }: {
         </ol>
       </>}
     </section>
+    <CutReview projectId={projectId} revision={revision} busy={busy} seek={seek} />
   </div>;
 }
