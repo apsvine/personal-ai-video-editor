@@ -89,7 +89,7 @@ export default function App() {
     }
   }
 
-  async function startAnalysis(stage: 'transcribe' | 'analyze') {
+  async function startAnalysis(stage: 'transcribe' | 'analyze' | 'plan') {
     if (!activeId) return;
     setError(''); setBusy(true);
     try {
@@ -154,7 +154,7 @@ export default function App() {
   return (
     <main>
       <h1>Personal AI Video Editor</h1>
-      <p>Phase 06 — Smart Cuts & Silence Removal Planning</p>
+      <p>Phase 07 — Caption Planning Engine</p>
       <p role="status">API Status: {status}</p>
       <section aria-label="Video import">
         <label htmlFor="video-input">Import Video</label>
@@ -181,6 +181,7 @@ export default function App() {
           {project.audio_status === 'no_audio' && <p>No audio stream: video is ready; audio.wav was not created.</p>}
           {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('transcribe')}>Transcribe</button>}
           {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('analyze')}>Analyze Smart Cuts</button>}
+          {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('plan')}>Generate captions</button>}
           <TranscriptReview key={project.project_id} projectId={project.project_id}
             revision={`${job?.job_id}:${job?.status}`} busy={busy} />
         </>}

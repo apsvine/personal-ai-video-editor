@@ -145,7 +145,7 @@ class CutReviewTests(unittest.TestCase):
         retried=self.jobs.read(self.pid,response.json()['job_id']); self.assertEqual(retried['stage'],'analyze')
         self.assertEqual(retried['retry_of'],job['job_id']); self.assertEqual(retried['status'],'succeeded')
         self.assertEqual(self.cuts_path.read_bytes(),before)
-        for stage in ('plan','render'):
+        for stage in ('render',):
             self.assertEqual(self.client.post(endpoint,headers=self.headers,json={'stage':stage}).status_code,422)
 
     def test_interrupted_analysis_recovers_and_retries_same_stage(self):

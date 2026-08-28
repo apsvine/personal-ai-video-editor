@@ -14,6 +14,7 @@ let saved = structuredClone(fixture);
 window.fetch = async (_input, init) => {
   const url = String(_input);
   if (url.includes('/cuts')) return new Response(JSON.stringify({error:{message:'No cut plan in Phase 05 fixture.'}}),{status:404});
+  if (url.includes('/captions')) return new Response(JSON.stringify({error:{message:'No caption plan in Phase 05 fixture.'}}),{status:404});
   if (init?.method) {
     const data = JSON.parse(String(init.body));
     if (url.endsWith('/overrides/reset')) saved = structuredClone(fixture);

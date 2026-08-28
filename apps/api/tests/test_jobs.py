@@ -165,7 +165,7 @@ class JobTests(unittest.TestCase):
         with patch.object(media, 'PROJECTS', self.root), patch.object(media, 'MANAGER', self.jobs):
             with TestClient(app) as client, patch.object(n, 'normalize', side_effect=run):
                 created = n.create_project(self.root, 'new.mp4', 4)
-                unsupported = client.post(f'/projects/{self.pid}/jobs', json={'stage': 'plan'}, headers={'X-Media-Import': '1'})
+                unsupported = client.post(f'/projects/{self.pid}/jobs', json={'stage': 'render'}, headers={'X-Media-Import': '1'})
                 self.assertEqual(unsupported.status_code, 422)
                 response = client.put(f'/projects/{created["project_id"]}/source?background=true', content=b'test',
                                       headers={'X-Media-Import': '1', 'Content-Type': 'application/octet-stream'})

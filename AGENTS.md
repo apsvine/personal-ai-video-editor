@@ -3,7 +3,7 @@
 - Read `README.md` and this file before any modification.
 - Inspect the repository, Git status, and relevant files before editing.
 - Identify the files to change and keep changes within the requested scope.
-- Implement exactly one requested phase per task. Current phase: **06**.
+- Implement exactly one requested phase per task. Current phase: **07**.
 - Never silently implement future phases; stop when the requested phase is complete.
 - Do not refactor unrelated files or overwrite user changes.
 - Add no dependency without an explicit justification; prefer the standard library.
@@ -39,7 +39,7 @@ Shared controls belong in python/common; normalization keeps compatible imports.
 No Phase 05 features, other providers, diarization, captions, editing, or rendering.
 Run all existing checks and --phase04 doctor. Missing model is WARN, not FAIL.
 
-## Phase 06 boundary
+## Historical Phase 06 boundary (superseded only by approved Phase 07)
 
 Only normalize/transcribe/analyze jobs execute. Smart Cuts writes analysis/cuts.json
 and overrides/user_cuts.json, plus normal jobs/logs. Generated proposal topology

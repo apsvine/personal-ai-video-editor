@@ -1,4 +1,4 @@
-# Phase 06 data contracts (preserving Phase 02–05 artifacts)
+# Phase 07 data contracts (preserving Phase 02–06 artifacts)
 
 All implemented JSON schemas use integer `schema_version: 1`. Files live at
 `runtime/projects/<32 lowercase hex characters>/`; runtime is never tracked.
@@ -51,7 +51,7 @@ expected output checksum; source/output corruption invalidates the cache.
 ## Future contracts (not implemented)
 
 Later stages should use versioned JSON artifacts, explicit provenance and input
-identity, atomic publication and scoped invalidation. Only the Phase 06 silence proposal schema below is implemented; captions and rendering remain future work. The Phase 04 transcript
+identity, atomic publication and scoped invalidation. The Phase 06 silence and Phase 07 caption schemas below are implemented; rendering remains future work. The Phase 04 transcript
 schema is below.
 
 ## jobs/<job-id>.json (Phase 03)
@@ -60,7 +60,7 @@ Each job ID is 32 lowercase hexadecimal characters. All records contain:
 
 - `schema_version: 1`, `job_id`, `project_id` (the retained source project).
 - `stage`: contract names `normalize`, `transcribe`, `analyze`, `plan`, `render`.
-  Only `normalize`, `transcribe` and `analyze` can execute; `plan` and `render` have no handlers.
+  `normalize`, `transcribe`, `analyze` and caption-only `plan` can execute; `render` has no handler.
 - `status`: `pending`, `running`, `succeeded`, `failed`, `cancelled`, `interrupted`.
 - `progress`: finite numeric value in [0.0, 1.0]; 1.0 on success.
   Milestones: 0 pending, .05 setup/hash/cache, .15 probe, .25 proxy, .65 audio,
@@ -362,3 +362,170 @@ normal silence proposals retain edge padding. Negative, nonfinite, boolean and
 out-of-range query times are rejected. Adjacent removal intervals are supported.
 Round trips apply within retained intervals; removed spans collapse and are not invertible.
 This logic has no frontend dependency and performs no media operation.
+
+## analysis/captions.json (Phase 07)
+
+Exactly these top-level fields are published. Placeholder digests below represent
+64 lowercase SHA-256 hex characters; real IDs contain the full digest.
+
+```json
+{
+  "schema_version": 1,
+  "project_id": "<completed output project ID>",
+  "planner_version": "genuine-word-captions-v1",
+  "raw_transcript_checksum": "<raw content_checksum>",
+  "effective_transcript_checksum": "<canonical effective texts digest>",
+  "effective_cut_checksum": "<accepted topology/clock digest>",
+  "settings": {
+    "max_words": 5,
+    "max_characters": 42,
+    "pause_threshold": 0.5,
+    "minimum_duration": 0.7,
+    "maximum_duration": 3.0,
+    "punctuation_break": true
+  },
+  "source_duration": 10.0,
+  "audio_offset": 0.0,
+  "removed": [{"start": 2.0, "end": 3.0}],
+  "items": [{
+    "original_start": 4.0,
+    "original_end": 4.8,
+    "edited_start": 3.0,
+    "edited_end": 3.8,
+    "text": "BINARY SEARCH",
+    "words": [
+      {"segment_id": "0", "word_index": 0, "text": "BINARY", "joiner": " ",
+       "original_start": 4.0, "original_end": 4.3},
+      {"segment_id": "0", "word_index": 1, "text": "SEARCH", "joiner": " ",
+       "original_start": 4.4, "original_end": 4.8}
+    ],
+    "layout": "center",
+    "behavior": "normal",
+    "emphasis": 0.0,
+    "caption_id": "caption-<deterministic SHA-256>"
+  }],
+  "warnings": [],
+  "content_checksum": "<canonical complete artifact digest>"
+}
+```
+
+All intervals are finite half-open seconds. Original intervals are on the normalized
+proxy clock, not necessarily WAV zero: `raw_time + audio_offset`. The verified Phase
+06 offset is retained, never estimated again. The accepted-only `removed` snapshot
+is included for consumer safety; it is not generated proposal topology. No caption
+may intersect it. Edited endpoints use existing Phase 06 helpers. A caption ending
+exactly at a cut start uses that helper's splice time for its exclusive endpoint.
+
+`words` references the authoritative `segments[int(segment_id)].words[word_index]`.
+The reference pair is valid only with `raw_transcript_checksum`. Its original bounds
+are the exact raw bounds plus the clock offset. Text is the safely mapped effective
+display chunk. `joiner` is either a single space or empty string and describes the
+separator before that chunk; ignore the first chunk's joiner when rendering a group.
+No-space fragments reconstructed exactly from raw text stay together. If a fragment
+is missing, intersects a cut or makes the atom exceed maximum limits, the indivisible
+unit is omitted rather than displayed as a partial lexical word. No per-word edited
+timing is invented. Layout/behavior/emphasis are semantic constants, not CSS.
+
+### Settings and grouping contract
+
+Partial settings are accepted through the plan job request and expanded to the
+complete settings above. Unknown keys fail. `max_words` is a strict integer in
+1–20, `max_characters` a strict integer in 1–200. Duration settings are finite
+positive numbers up to 60 s and normalized to floats; minimum must not exceed
+maximum. Punctuation preference is a strict boolean.
+
+Within each segment, retain only safely mapped positive-duration words fully inside
+one retained Phase 06 span. Group in source order. Break before a word/fragment atom
+if a cut/omission intervenes, the gap is at least the pause threshold, a maximum
+would be exceeded, or the preceding chunk ends in preferred punctuation.
+Punctuation includes period, comma, question/exclamation marks, semicolon, colon,
+their common full-width forms, and trailing closing quotes/brackets.
+Maximum characters counts Unicode code points including joiners, not rendered width.
+Maximum words counts timed source entries (compound fragments can count separately).
+
+Short groups try merging with the next compatible group, then the previous,
+repeating until no merge applies. Merges cannot cross segments, cuts, omitted
+words, pause thresholds or sentence-final punctuation; soft punctuation may merge.
+All maxima still apply. Otherwise preserve the exact genuine interval and warn.
+No padding into silence, synthetic durations or alignment is generated.
+
+### Text mapping and warnings
+
+The effective-text list contains one Phase 05 merged string per raw segment.
+First try exact reconstruction from the original word chunks, normalizing only
+whitespace. Otherwise require one effective whitespace token per raw timed word,
+unchanged lexical text in order after case folding and removal of Unicode edge
+punctuation. This intentionally supports fewer corrections than arbitrary equal-count
+substitution. Spelling replacements, insertions, deletions, reordering or mismatched
+tokenization are conservatively ambiguous, unless exact chunk reconstruction applies.
+Never silently substitute raw ASR text. Empty effective text means no captions.
+Invalid/stale overrides fail generation/retrieval rather than using their raw fallback.
+
+Every warning has exactly:
+
+```json
+{
+  "type": "ambiguous_text_timing",
+  "segment_id": "0",
+  "word_index": null,
+  "caption_id": null,
+  "message": "Effective text could not be mapped safely to authoritative word timing. Segment omitted."
+}
+```
+
+Warning types are:
+
+| Type | Behavior/reference |
+| --- | --- |
+| `ambiguous_text_timing` | Whole segment omitted; word/caption references null |
+| `empty_text` | Effective text empty despite raw words; segment omitted |
+| `zero_duration_word` | Raw word has no positive interval; word index supplied |
+| `removed_word` | Word intersects accepted removal; word index supplied |
+| `unsafe_word_fragments` | Incomplete/cut-crossing no-space fragment atom omitted; first word index supplied |
+| `word_exceeds_limits` | Indivisible word/atom exceeds maxima; first word index supplied |
+| `minimum_duration_unmet` | Genuine short caption retained; caption ID supplied |
+
+Messages and order are deterministic: source segments in order, segment/word
+diagnostics before their caption-duration diagnostics. Multiple diagnostics may
+describe one omitted fragment atom. UI displays the readable messages and one-based
+segment labels. Malformed or missing authoritative alignment fails validation, not
+a manufactured caption or empty-success fallback.
+
+### Identity, validation and atomicity
+
+All digests use Phase 04's canonical sorted compact JSON SHA-256, excluding only a
+top-level `content_checksum` field. The effective text digest hashes `{"texts":[...]}`.
+The effective cut digest hashes `{"source_duration":...,"removed":[...],"audio_offset":...}`.
+Proposal IDs/checksums and pending/rejected decisions are intentionally excluded
+from effective identity. Pending → rejected is reusable; accepting/removing acceptance
+changes topology and invalidates. Effective text changes invalidate even when a
+segment will be omitted. Raw identity, settings, schema/planner version and project
+identity also participate. Equivalent settings patches resolve to the same settings.
+
+Caption IDs are `caption-` plus SHA-256 of `{"identity":key,"item":item}`, where
+`key` is every top-level field preceding items/warnings/checksum and `item` is the
+complete item before caption_id is added. No UUID or clock enters the plan.
+Changing any relevant identity may change every caption ID.
+
+Readers revalidate protected inputs through Phase 04/06 helpers, merge overlays,
+reconstruct the expected pure plan and verify both checksum and exact content.
+Stale/corrupt captions return 404 `captions_not_ready`. Invalid overlays return 409;
+missing transcript/cuts and normalization prerequisites preserve existing readable
+errors. Generation/settings errors are 422. Publication failure is 500
+`caption_write_failed`. Writes share existing heavy-operation exclusion and use the
+existing unique sibling/flush/fsync/atomic rename utility. A failed attempt leaves
+the previous complete plan untouched, but stale data is never served as current.
+External file editing while the backend is active is unsupported.
+
+### Jobs and preview
+
+POST `/projects/{id}/jobs` with `{"stage":"plan","caption_settings":{...}}` starts
+caption generation; settings may be omitted. Plan jobs add `caption_settings` to
+the existing job record and retain it on retry. Old jobs remain readable.
+Caption settings on non-plan jobs are rejected. GET `/projects/{id}/captions`
+returns the current validated artifact with its persisted settings.
+
+Browser activation uses `original_start <= video.currentTime < original_end`
+and explicitly hides within `removed`. It does not compare original proxy time with
+edited timestamps. Playback, seeking, reload and job/input revisions update or
+invalidate the preview. There is no automatic edited playback, export or renderer.
