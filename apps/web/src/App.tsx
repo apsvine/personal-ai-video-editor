@@ -89,17 +89,17 @@ export default function App() {
     }
   }
 
-  async function startTranscription() {
+  async function startAnalysis(stage: 'transcribe' | 'analyze') {
     if (!activeId) return;
     setError(''); setBusy(true);
     try {
       const next = await readResponse(await fetch(`${API}/projects/${activeId}/jobs`, {
         method: 'POST', headers: { 'X-Media-Import': '1', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: 'transcribe' }),
+        body: JSON.stringify({ stage }),
       })) as Job;
       setJob(next);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Transcription request failed.');
+      setError(failure instanceof Error ? failure.message : 'Analysis request failed.');
       setBusy(false);
     }
   }
@@ -154,7 +154,7 @@ export default function App() {
   return (
     <main>
       <h1>Personal AI Video Editor</h1>
-      <p>Phase 05 — Transcript Review & Word Timing</p>
+      <p>Phase 06 — Smart Cuts & Silence Removal Planning</p>
       <p role="status">API Status: {status}</p>
       <section aria-label="Video import">
         <label htmlFor="video-input">Import Video</label>
@@ -179,7 +179,8 @@ export default function App() {
           <p>Source: {metadata.width} × {metadata.height} · {metadata.duration_seconds.toFixed(2)} seconds
             {' · '}{metadata.frame_rate.toFixed(2)} fps · rotation {metadata.rotation_degrees}°</p>
           {project.audio_status === 'no_audio' && <p>No audio stream: video is ready; audio.wav was not created.</p>}
-          {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startTranscription()}>Transcribe</button>}
+          {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('transcribe')}>Transcribe</button>}
+          {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('analyze')}>Analyze Smart Cuts</button>}
           <TranscriptReview key={project.project_id} projectId={project.project_id}
             revision={`${job?.job_id}:${job?.status}`} busy={busy} />
         </>}

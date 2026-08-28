@@ -37,3 +37,7 @@ textarea { box-sizing: border-box; width: 100%; min-height: 6rem; font: inherit;
   .review-layout { grid-template-columns: minmax(0, 1fr); }
   .review-layout video { position: static; max-height: 40vh; }
 }
+
+.cuts-panel { grid-column: 1 / -1; border-top: 1px solid #64748b; padding-top: 1rem; }
+.cut-candidate { padding: .75rem 0; border-bottom: 1px solid #64748b; }
+.cut-candidate button { margin: .2rem; }

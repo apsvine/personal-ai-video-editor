@@ -1,7 +1,7 @@
 # Personal AI Video Editor
 
 A private, local-first AI video editing application for one user. V1 will
-target talking-head vertical videos. The current phase is **Phase 05: Transcript Review & Word Timing UI** (manual acceptance passed; approved), built on approved Phases 00–04. It is not a video editor yet.
+target talking-head vertical videos. The current phase is **Phase 06: Smart Cuts & Silence Removal Planning**, built on approved Phases 00–05. Cut proposals and explicit decisions do not modify or render media. Phase 06 manual listening acceptance is approved.
 
 ## North-star workflow
 
@@ -101,7 +101,7 @@ npm --prefix apps/web run dev
 ```
 
 Open <http://127.0.0.1:5173>. The page displays the project title,
-“Phase 05 — Transcript Review & Word Timing”, and “API Status: Connected” when the API returns
+“Phase 06 — Smart Cuts & Silence Removal Planning”, and “API Status: Connected” when the API returns
 the expected JSON. It starts at “Checking…” and shows “Disconnected” for
 network errors, timeouts, non-success responses, or unexpected JSON. Each
 request times out after three seconds; another check follows five seconds
@@ -203,9 +203,9 @@ must require an explicit user choice. Do not assume prior chat context.
 
 ## Explicitly not built yet
 
-There is no edit planning, captions, rendering, database, authentication, or desktop packaging.
+Only conservative silence-cut planning is implemented. There are no captions, rendering, database, authentication, or desktop packaging.
 Remotion and Electron are not installed. No models or media are bundled.
-Phase 06 and later functionality is deliberately excluded.
+Phase 07 and later functionality is deliberately excluded.
 
 ## Phase 02 behavior and API
 
@@ -333,7 +333,7 @@ that upload, which is not resumable. Re-import an incomplete upload.
 | POST | `/projects/{id}/jobs/{job_id}/retry` | New linked attempt for failed/interrupted/cancelled job; 202 |
 
 All writes retain `X-Media-Import: 1` and local-origin protection. Phase 03 originally supported only normalization. Phase 04 adds explicit transcribe
-stage selection; analyze, plan and render remain rejected. There is no queue or database.
+stage selection; Phase 06 adds analyze. Plan and render remain rejected. There is no queue or database.
 
 Lifecycle: pending → running → succeeded / failed / cancelled / interrupted.
 Startup converts abandoned pending/running records to interrupted. Graceful
@@ -635,3 +635,124 @@ reused-import resolution.
 No remaining Phase 05 acceptance or implementation blocker is known. Approximate
 ASR timing and the documented V1 limitations remain intentional. Phase 06 is not
 started. Approval does not authorize a commit, push, merge, or tag.
+
+
+## Phase 06 — Smart Cuts & Silence Removal Planning
+
+**Analyze Smart Cuts** runs a persistent `analyze` job after normalization and a
+valid Phase 04 transcript exist. It consumes only verified normalized audio and
+raw word timing. It never transcribes automatically and never downloads a model.
+The existing source, proxy, WAV, transcript and transcript corrections are untouched.
+Only `analysis/cuts.json`, `overrides/user_cuts.json`, and jobs/logs are produced.
+No `plan` or `render` handler, edited playback, captions or Phase 07 feature exists.
+
+FFmpeg `silencedetect` reads the mono 16 kHz PCM16 WAV and writes to a null sink.
+Defaults: -40 dB, 0.8 s minimum silence, 0.2 s preserved at silence edges and
+around raw words, 0.3 s minimum resulting cut. There is no threshold auto-tuning.
+Valid wordless segments protect their entire envelope. Invalid/missing transcripts
+block analysis; valid empty speech produces a prominent human-review warning.
+Text corrections (including empty corrected text) never remove speech protection.
+
+Generated `keep`/`removed` describe the **proposal topology**, as if every proposed
+cut were accepted. They are not the effective user plan. The review response
+separately exposes effective keep/removed/mapping: pending or rejected proposals
+are retained; only accepted proposals shorten the effective plan. Accept, Reject,
+Reset decision and Reset All Decisions write only sparse cut overrides. Reload
+and refresh fetch saved decisions. Resetting the last decision removes the override
+file. Stale/invalid overrides are withheld and can be explicitly reset. Playback
+and candidate seeking always use the unchanged original proxy timeline.
+
+### Timing and safety
+
+`source_duration` is the normalized proxy's full presentation duration, which can
+differ from source-container metadata. Detector and raw transcript times originate
+at WAV sample zero. The planner records `audio_offset`, derived from the source
+stream start relative to the source container origin, then shifts both detector
+intervals and protected raw-word intervals into proxy time. It verifies the proxy
+starts against that offset, allowing a known single AAC encoder-priming frame.
+Missing, inconsistent or unsupported timing raises `cuts_alignment_uncertain`.
+This does not change Phase 05's original ASR timing/seeking behavior.
+
+ASR alignment is approximate and may omit quiet speech; energy detection is not a
+speech classifier. Music, breaths and intentional pauses may be retained or proposed.
+Listen to every candidate before accepting. No automatic acceptance is implemented.
+No edited video exists to audition; original playback remains full length.
+
+### APIs
+
+POST `/projects/{id}/jobs` with `{"stage":"analyze"}` starts analysis. Existing
+read/latest/cancel/retry routes apply. Cancellation checks and subprocess cleanup,
+one-heavy-job exclusion, restart recovery and retry lineage remain unchanged.
+Progress is coarse: .05 prerequisites, .15 detector, .8 planner, .9 publication,
+1 success. Settings are versioned Python configuration, not an editable API surface.
+
+GET `/projects/{id}/cuts` returns validated generated proposals; GET
+`/projects/{id}/cuts/review` returns candidates, decisions and the effective mapping.
+PUT `/projects/{id}/cuts/overrides/{cut_id}` accepts
+`{"source_cuts_checksum":"<current checksum>","action":"accept"}` (or `reject`).
+POST `/projects/{id}/cuts/overrides/{cut_id}/reset` and POST
+`/projects/{id}/cuts/overrides/reset` accept only the checksum identity object.
+All writes require `X-Media-Import: 1` and the existing local-origin guard.
+See `docs/data-contracts.md` for exact schemas and mapping conventions.
+
+### Verification and manual acceptance
+
+Run the complete Phase 05 verification commands above; they include Phase 06
+backend and frontend tests. Also run `npm --prefix apps/web test`. Both browser
+harnesses must show **ALL PASSED** at `/tests/review.html` and `/tests/cuts.html`.
+They use isolated mocks and never mutate user projects. All doctor modes remain
+`default`, `--phase01`, `--phase02`, `--phase04`; no new doctor mode is invented.
+
+1. Stop the old backend in its own terminal, then restart from this repository:
+   `.venv/bin/python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000`.
+   Keep/start `npm --prefix apps/web run dev`. Do not run a second backend on the same runtime.
+2. Open `http://127.0.0.1:5173`; select/import a real spoken clip and finish
+   normalization/transcription using the already approved local model.
+3. Record hashes of the retained source, `normalized/proxy.mp4`, `normalized/audio.wav`,
+   `analysis/transcript.json` and `overrides/user_transcript.json` if present. Never
+   edit raw artifacts or alter a real transcript to manufacture a stale state.
+4. Click **Analyze Smart Cuts**, wait for success, inspect `analysis/cuts.json`, and
+   GET `/projects/<completed-output-id>/cuts` to require successful validation.
+   Check the explicit proposal `keep`/`removed`, inputs, settings and checksum.
+5. Require every candidate to start **pending**, effective duration equal to original,
+   and removed time zero. Seek before/after each candidate and listen through it.
+   Reject anything that might clip speech or damage an intentional pause.
+6. Record the `cuts.json` byte hash. Accept one candidate: effective duration must
+   fall by its length. Accept another if available; durations must combine. Refresh
+   and confirm saved decisions. Proxy duration/playback must remain unchanged.
+7. Reject every candidate: full effective duration must return. Reset one decision:
+   it becomes pending. Reset All Decisions: every candidate becomes pending, full
+   duration returns, and `overrides/user_cuts.json` is absent. Refresh again.
+8. Verify all protected hashes from step 3 and the generated cut hash from step 6
+   are unchanged. User decisions must never appear in generated cuts or transcript files.
+9. Analyze again: require a cache hit and byte-identical `cuts.json`. Exercise cancel,
+   retry and backend restart on a longer clip; require persisted job states and no
+   incomplete cut publication. Automated tests cover fast jobs that finish before Cancel.
+10. Require both browser harnesses to pass. Use isolated automated stale/invalid
+    override tests instead of tampering with real runtime files. Listen manually
+    before declaring Phase 06 accepted; never begin Phase 07 from these instructions.
+
+Verification during implementation used a temporary copy of the accepted real
+Phase 05 clip. One conservative candidate of about 0.308 s was produced; decisions,
+reset, topology validation, cut/transcript cache reuse and protected hashes passed.
+Real normalization of a separate temporary source copy also passed. Existing user
+project media/transcript files were not changed. The initial verification did not claim human listening acceptance. The stale Phase 05
+backend was subsequently restarted and real browser generation/reload verified.
+The user has now approved Phase 06 acceptance and explicitly authorized its commit,
+branch/main pushes, merge and annotated release tag.
+
+
+### Phase 06 acceptance — approved
+
+The user personally listened around the real 0.308-second proposal and confirmed
+no audible word or syllable is removed and both boundaries sound safe. Pending,
+Accept, Reject, single reset, Reset All Decisions, refresh persistence and read-only
+reload passed. Only explicit acceptance changes the effective plan. Generated cuts
+and user decisions remain separate. Source, proxy, WAV, raw transcript and transcript
+overrides remain unchanged; no rendered or destructively trimmed video exists.
+
+Automated verification is green: 86 backend tests, 10 frontend tests, both browser
+harnesses, production build, smoke, all available doctor modes and protected hashes.
+This approval covers Phase 06 only. Approximate ASR timing, conservative energy
+detection and supported timestamp-layout limits remain intentional. Phase 07 has
+not started; captions and rendering remain excluded.
