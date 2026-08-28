@@ -11,6 +11,7 @@
     "tests/review.browser.tsx",
     "src/cuts.ts",
     "src/CutReview.tsx",
-    "tests/cuts.browser.tsx"
+    "tests/cuts.browser.tsx",
+    "tests/captions.browser.tsx"
   ]
 }

@@ -1,4 +1,4 @@
-# Architecture — Phase 06 smart-cut planning and preserved pipeline
+# Architecture — Phase 07 caption planning and preserved pipeline
 
 Phase 00 established repository boundaries. Phase 01 implements only the local
 React + TypeScript + Vite status page and Python 3.11 + FastAPI health endpoint.
@@ -184,3 +184,47 @@ estimated original/effective/removed durations supplied by Python. No edit timel
 auto-skipping, rendering, localStorage decision cache or client-side mapping engine
 is introduced. The Phase 05 browser mock explicitly responds to the new optional
 cut route without changing transcript tests.
+
+## Phase 07 deterministic caption planning
+
+The earlier sections retain historical phase boundaries; Phase 07 adds the
+existing `plan` stage's caption-only handler. `render` remains unsupported.
+
+`python/editing/captions.py` is pure logic: raw Phase 04 timing and validated
+Phase 05 effective strings are distinct inputs, alongside Phase 06 accepted-only
+removals and verified audio-to-proxy offset. It owns grouping, deterministic IDs,
+structured warnings and the renderer-independent data schema. It reuses Phase 06
+`mapping` and `original_to_edited`; no second timeline-math implementation exists.
+
+`python/editing/caption_store.py` validates source/normalized/raw/cut provenance
+through existing helpers, applies both sparse overlays against current identities,
+and fails closed for invalid/stale overrides. It never falls back to raw text in
+that state. Reads reconstruct the expected deterministic plan to reject stale or
+corrupt artifacts. Generation compares that plan with the saved artifact and
+publishes only on cache miss using the existing atomic JSON writer.
+
+`python/common/jobs.py` dispatches `plan`, stores resolved `caption_settings`
+only on plan jobs, and preserves them on retry. Existing heavy reservation
+serializes caption publication with transcription/cut/correction writes. There is
+no new lock, queue, database, worker process or model. Existing recovery handles
+plan jobs too. Cancellation is checked before/after planning and immediately before
+publication; pure planning and hashing are not instantly cancellable.
+
+`CaptionPreview.tsx` loads the plan and exposes a simple overlay/status panel
+inside `TranscriptReview.tsx`, which retains video ownership. Revision-keyed
+snapshots prevent late requests from restoring old captions. CutReview notifies its
+parent after loads and mutations; transcript state changes likewise invalidate the
+caption snapshot. The player uses original proxy seconds, with an explicit removal
+guard. Edited seconds are stored for future consumers only. No playback skipping
+or media rendering occurs. `captions.ts` contains the pure activation helper.
+
+Exact original word chunks, including no-space fragments, retain source references
+and spacing. Other safe text mappings require unchanged lexical words in order;
+case/punctuation/whitespace changes may display with unchanged times. Ambiguity
+omits the segment with a warning. Genuine caption envelopes never pad timing.
+An accepted cut splits retained groups, and intersecting words/fragments are omitted.
+
+The only new project artifact is `analysis/captions.json`. Source, normalized media,
+transcript, transcript overrides, cuts and cut overrides are read-only to Phase 07.
+Tests cover pure grouping/cut safety, atomicity/cache/immutability, jobs, original
+clock activation, seeking, stale snapshots and browser reload.

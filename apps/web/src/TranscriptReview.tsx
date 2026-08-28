@@ -1,5 +1,6 @@
 import CutReview from './CutReview.js';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { CaptionOverlay, CaptionStatus, useCaptionPlan } from './CaptionPreview.js';
 import { activeSegment, seekVideo, timedWords } from './transcript.js';
 import type { Review, Segment } from './transcript.js';
 
@@ -34,6 +35,9 @@ export default function TranscriptReview({ projectId, revision, busy }: {
   const [draft, setDraft] = useState('');
   const [time, setTime] = useState(0);
   const [reload, setReload] = useState(0);
+  const [cutRevision, setCutRevision] = useState(0);
+  const cutsChanged = useCallback(() => setCutRevision(n => n + 1), []);
+  const captionState = useCaptionPlan(projectId, JSON.stringify([revision, review, cutRevision, saving, reload]));
   const video = useRef<HTMLVideoElement>(null);
   const generation = useRef(0);
   const savingRef = useRef(false);
@@ -104,9 +108,16 @@ export default function TranscriptReview({ projectId, revision, busy }: {
   const invalid = review?.override_state === 'stale' || review?.override_state === 'invalid';
 
   return <div className="review-layout">
+    <div className="proxy-preview">
+    <div className="proxy-frame">
     <video ref={video} controls preload="metadata" src={`${API}/projects/${projectId}/proxy`}
       onTimeUpdate={event => setTime(event.currentTarget.currentTime)}
+      onSeeking={event => setTime(event.currentTarget.currentTime)}
       onSeeked={event => setTime(event.currentTarget.currentTime)} />
+    <CaptionOverlay plan={saving || loading || busy ? null : captionState.plan} time={time} />
+    </div>
+    <CaptionStatus {...captionState} />
+    </div>
     <section className="transcript-panel" aria-label="Transcript review">
       <h2>Transcript review</h2>
       <button disabled={loading || saving} onClick={() => setReload(r => r + 1)}>Reload transcript</button>
@@ -140,6 +151,6 @@ export default function TranscriptReview({ projectId, revision, busy }: {
         </ol>
       </>}
     </section>
-    <CutReview projectId={projectId} revision={revision} busy={busy} seek={seek} />
+    <CutReview projectId={projectId} revision={revision} busy={busy} seek={seek} onChange={cutsChanged} />
   </div>;
 }

@@ -18,8 +18,8 @@ export function CandidateRow({ candidate, blocked, change, seek }: {
   </li>;
 }
 
-export default function CutReview({ projectId, revision, busy, seek }: {
-  projectId: string; revision: string; busy: boolean; seek: (time: number) => void;
+export default function CutReview({ projectId, revision, busy, seek, onChange }: {
+  projectId: string; revision: string; busy: boolean; seek: (time: number) => void; onChange?: () => void;
 }) {
   const [review, setReview] = useState<CutReviewData | null>(null);
   const [error, setError] = useState('');
@@ -45,11 +45,11 @@ export default function CutReview({ projectId, revision, busy, seek }: {
           : failure instanceof Error ? failure.message : 'Smart Cuts could not be loaded.');
       } finally {
         clearTimeout(timeout);
-        if (generation.current === current) setLoading(false);
+        if (generation.current === current) { setLoading(false); onChange?.(); }
       }
     })();
     return () => { clearTimeout(timeout); controller.abort(); generation.current++; };
-  }, [base, revision, reload]);
+  }, [base, revision, reload, onChange]);
 
   async function change(action: 'accept' | 'reject' | 'reset' | 'reset-all', id?: string) {
     if (!review || busy || loading || savingRef.current) return;
@@ -76,7 +76,7 @@ export default function CutReview({ projectId, revision, busy, seek }: {
       if (generation.current === current) setError(controller.signal.aborted
         ? 'Save timed out. Reload Smart Cuts to verify whether it was saved.'
         : failure instanceof Error ? failure.message : 'Save failed. Reload to verify.');
-    } finally { clearTimeout(timeout); savingRef.current = false; setSaving(false); }
+    } finally { clearTimeout(timeout); savingRef.current = false; setSaving(false); onChange?.(); }
   }
   const invalid = review?.override_state === 'stale' || review?.override_state === 'invalid';
   return <section className="cuts-panel" aria-label="Smart Cuts review">

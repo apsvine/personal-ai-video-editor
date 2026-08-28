@@ -1,7 +1,7 @@
 # Personal AI Video Editor
 
 A private, local-first AI video editing application for one user. V1 will
-target talking-head vertical videos. The current phase is **Phase 06: Smart Cuts & Silence Removal Planning**, built on approved Phases 00–05. Cut proposals and explicit decisions do not modify or render media. Phase 06 manual listening acceptance is approved.
+target talking-head vertical videos. The current phase is **Phase 07: Caption Planning Engine**, built on approved Phases 00–06. Deterministic captions are JSON plan data with an HTML preview, never rendered video. Phase 07 manual and listening acceptance is approved.
 
 ## North-star workflow
 
@@ -101,7 +101,7 @@ npm --prefix apps/web run dev
 ```
 
 Open <http://127.0.0.1:5173>. The page displays the project title,
-“Phase 06 — Smart Cuts & Silence Removal Planning”, and “API Status: Connected” when the API returns
+“Phase 07 — Caption Planning Engine”, and “API Status: Connected” when the API returns
 the expected JSON. It starts at “Checking…” and shows “Disconnected” for
 network errors, timeouts, non-success responses, or unexpected JSON. Each
 request times out after three seconds; another check follows five seconds
@@ -149,7 +149,7 @@ keep the API running, and run `npm --prefix apps/web run preview`. Preview uses
 the same loopback port 5173 so the CORS policy remains unchanged.
 
 Manual checks: open the page, confirm Connected, stop the API and wait up to
-eight seconds for Disconnected, then restart it and confirm recovery. The Phase 02 acceptance steps below cover import and playback. There should be no sidebar, complex timeline, captions, or rendering controls.
+eight seconds for Disconnected, then restart it and confirm recovery. The Phase 02 acceptance steps below cover import and playback. Phase 07 adds only the caption-plan controls and preview; no sidebar, complex timeline or rendering controls.
 
 Dependencies are deliberately limited: React/React DOM for the UI;
 TypeScript, React types, Vite and its React plugin for local development/build;
@@ -203,9 +203,9 @@ must require an explicit user choice. Do not assume prior chat context.
 
 ## Explicitly not built yet
 
-Only conservative silence-cut planning is implemented. There are no captions, rendering, database, authentication, or desktop packaging.
+Conservative silence-cut and caption planning are implemented. There is no rendering, database, authentication, or desktop packaging.
 Remotion and Electron are not installed. No models or media are bundled.
-Phase 07 and later functionality is deliberately excluded.
+Phase 08 and later functionality is deliberately excluded.
 
 ## Phase 02 behavior and API
 
@@ -333,7 +333,7 @@ that upload, which is not resumable. Re-import an incomplete upload.
 | POST | `/projects/{id}/jobs/{job_id}/retry` | New linked attempt for failed/interrupted/cancelled job; 202 |
 
 All writes retain `X-Media-Import: 1` and local-origin protection. Phase 03 originally supported only normalization. Phase 04 adds explicit transcribe
-stage selection; Phase 06 adds analyze. Plan and render remain rejected. There is no queue or database.
+stage selection; Phase 06 adds analyze; Phase 07 adds caption-only plan. Render remains rejected. There is no queue or database.
 
 Lifecycle: pending → running → succeeded / failed / cancelled / interrupted.
 Startup converts abandoned pending/running records to interrupted. Graceful
@@ -756,3 +756,145 @@ harnesses, production build, smoke, all available doctor modes and protected has
 This approval covers Phase 06 only. Approximate ASR timing, conservative energy
 detection and supported timestamp-layout limits remain intentional. Phase 07 has
 not started; captions and rendering remain excluded.
+
+## Phase 07 — Caption Planning Engine
+
+The earlier phase sections describe their historical acceptance boundaries.
+Phase 07 now implements only this approved flow:
+
+Phase 05 effective text + Phase 04 authoritative word timing + Phase 06
+accepted-only topology → pure deterministic planner → analysis/captions.json
+→ HTML/CSS preview over the unchanged proxy.
+
+Click **Generate captions** after transcription and Smart Cuts analysis. It starts
+a persistent `plan` job using existing progress, cancel, retry, recovery and locks.
+It does not analyze cuts or transcribe automatically. Missing/stale cut plans must
+be regenerated explicitly; invalid/stale correction or decision overlays must be
+resolved explicitly. No render handler, Remotion, AI rewriting, style designer,
+animations, sound effects, B-roll or Phase 08 functionality is introduced.
+
+### Rules, safe text and timing
+
+Defaults are 5 maximum timed words, 42 characters (including separators), 0.5 s
+pause threshold, 0.7 s minimum duration, 3.0 s maximum duration, and punctuation
+break preference enabled. Settings are validated/versioned and deterministic.
+Groups never cross transcript segments, omitted words or accepted cuts. Greedy
+grouping breaks at punctuation, pauses and maximum limits. Short groups try a
+safe next-neighbor merge, then the previous; soft punctuation can merge but sentence
+stops and pauses cannot. If no safe merge fits, preserve genuine timing and warn.
+An indivisible word exceeding a maximum is omitted and warned, never split in time.
+
+Exact concatenated raw word chunks can reconstruct effective text, including
+separately timed compound fragments. Their original joiners are retained and
+no-space fragments stay together. Otherwise, whitespace tokens must match raw
+timed words one-for-one with the same lexical text after case folding and removal
+of edge punctuation. This permits casing/punctuation/whitespace corrections, not
+arbitrary replacement/reordering just because word counts match. Ambiguous segments
+are omitted with `ambiguous_text_timing`; there is no raw-ASR fallback. Empty
+effective text produces no captions. No raw data is changed.
+
+Raw times are WAV-relative. The verified Phase 06 `audio_offset` shifts them into
+proxy time; this is clock conversion, not inferred alignment. Intersecting words
+are omitted without clipping. Existing Phase 06 mapping helpers convert surviving
+caption endpoints into edited time, including the splice endpoint convention.
+Pending/rejected proposals never shorten caption timing.
+
+The browser compares `video.currentTime` with `original_start/original_end`,
+not edited timestamps. Half-open intervals hide captions in gaps, at ends and
+during accepted removals. Seeking updates the overlay immediately. Caption state
+reloads after job changes, transcript saves/resets and cut decisions. Old snapshots
+are hidden while reloading; stale plans require Generate captions. Reload captions
+and full page refresh retrieve persisted data. Other clients' changes need a reload.
+Native video fullscreen may exclude the separate HTML overlay; use inline playback.
+
+### API, cache and publication
+
+- POST `/projects/{id}/jobs`: `{"stage":"plan"}`.
+- Optional settings patch: `{"stage":"plan","caption_settings":{"max_words":4}}`.
+  The job stores the fully resolved settings and retry retains them. The UI uses defaults.
+- GET `/projects/{id}/captions`: validated current plan, or a readable error.
+- Existing latest/read/cancel/retry endpoints remain unchanged; render is rejected.
+
+Writes require `X-Media-Import: 1` and the local-origin guard. Plan progress is
+.05 inputs, .8 ready, .9 publication, 1 success; it is not a time estimate.
+Only `analysis/captions.json` and normal jobs/logs are written.
+The canonical artifact is atomically published with the existing unique sibling,
+flush/fsync and rename utility. Failures preserve previous complete bytes; an old
+artifact is not served as current when its inputs no longer match.
+
+Cache identity includes raw transcript checksum, effective-text checksum, accepted
+removal topology/source duration/audio offset, settings, schema and planner version.
+Pending → rejected alone is a cache hit; accepting a removal or changing effective
+text invalidates it. Reads and cache checks reconstruct the expected pure plan, so
+even well-formed modified output is not trusted. This favors integrity over avoiding
+the inexpensive grouping computation. Full media hashing can still take time.
+No generated-at clock, random ID or proposal-only decision state affects the plan.
+Exact fields and warnings are documented in `docs/data-contracts.md`.
+
+### Verification and manual acceptance
+
+Run the existing complete verification matrix, plus the Phase 07 harness:
+
+```sh
+.venv/bin/python scripts/smoke_test.py
+(cd apps/api && ../../.venv/bin/python -m unittest discover -s tests -v)
+npm --prefix apps/web test
+npm --prefix apps/web run build
+.venv/bin/python scripts/doctor.py
+.venv/bin/python scripts/doctor.py --phase01
+.venv/bin/python scripts/doctor.py --phase02
+.venv/bin/python scripts/doctor.py --phase04
+git diff --check
+```
+
+Open `/tests/review.html`, `/tests/cuts.html`, and `/tests/captions.html`
+on the Vite server; all must show **ALL PASSED**. They use isolated mock state
+and never modify real project artifacts. The complete backend suite also covers
+Phase 02 real FFmpeg media, Phase 03 crash/recovery and Phase 04–06 regressions.
+
+1. Restart the existing backend (do not run a second against the same runtime):
+   `.venv/bin/python -m uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000`.
+   Start/keep `npm --prefix apps/web run dev`. Open `http://127.0.0.1:5173`.
+2. Select the previously transcribed spoken project. Preserve its current corrections
+   and decisions. Record SHA-256 hashes of source, proxy, WAV, transcript, cuts,
+   metadata, project.json and both overrides if present; record absent overrides too.
+3. Click **Generate captions**. Require `plan — succeeded`, a group count and any
+   readable warnings. Inspect `analysis/captions.json` and GET its endpoint.
+4. Play inline. Check readable groups and approximate speech synchronization.
+   Pause and use raw-word/segment seek buttons; verify the appropriate overlay or
+   no overlay. The pre-existing transcript seek is WAV-relative; for nonzero offsets
+   a seek can precede the caption slightly until proxy playback reaches it.
+5. Seek before, inside and after the already accepted cut. Captions must disappear
+   inside it. Downstream edited caption times shorten by cumulative accepted cuts;
+   original proxy duration and caption activation remain unchanged.
+6. Seek past the last caption and into a gap: no overlay. Refresh the page, seek again
+   and confirm persisted plan/warnings. Click **Generate captions** again: require
+   reused artifacts and unchanged caption bytes.
+7. Verify all protected hashes and file-presence states from step 2 are unchanged.
+   Exercise correction/cut invalidation with the isolated harnesses/tests, not by
+   altering real artifacts just for verification.
+8. Manually assess readability/speech timing before approving Phase 07. No commit,
+   push, merge, tag or Phase 08 work is authorized by implementation completion.
+
+Known limits: approximate ASR timing, conservative lexical mapping, no forced
+realignment, whitespace-oriented token matching when exact chunk reconstruction
+does not apply, max-word counts based on timed source entries, no cross-segment
+minimum-duration merge, possible short genuine intervals with warnings, no edited
+playback or export, and browser event-rate rather than frame-perfect activation.
+
+### Phase 07 acceptance — approved
+
+The user confirmed real proxy captions are short, readable and approximately
+synchronized with speech. Seeking updates the active caption immediately; gaps
+and accepted removed intervals show no caption. Refresh restores the plan.
+The preview uses original proxy time while items retain both original and edited
+bounds. Only accepted cuts shorten edited timing; pending/rejected cuts do not.
+
+Safely mapped corrected text displays as intended. Ambiguous corrections are
+omitted with readable warnings; authoritative Phase 04 word times remain unchanged
+and no alignment is fabricated. Protected media, raw transcript and generated cuts
+remain unchanged; override changes were limited to intentional manual testing and
+existing decisions. Phases 00–06 remain intact. No rendered video exists.
+
+The user explicitly authorized Phase 07 commit, feature/main pushes, merge and
+annotated stable tag. This acceptance does not authorize Phase 08 or rendering.

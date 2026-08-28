@@ -41,3 +41,13 @@ textarea { box-sizing: border-box; width: 100%; min-height: 6rem; font: inherit;
 .cuts-panel { grid-column: 1 / -1; border-top: 1px solid #64748b; padding-top: 1rem; }
 .cut-candidate { padding: .75rem 0; border-bottom: 1px solid #64748b; }
 .cut-candidate button { margin: .2rem; }
+
+.proxy-preview { position: sticky; top: 1rem; min-width: 0; }
+.proxy-frame { position: relative; background: #111; }
+.review-layout .proxy-frame video { position: static; margin: 0; width: 100%; }
+.caption-overlay { position: absolute; left: 8%; right: 8%; bottom: 18%;
+  text-align: center; color: white; background: rgb(0 0 0 / 75%);
+  font-size: clamp(1rem, 2vw, 1.5rem); font-weight: 600; padding: .3rem .5rem;
+  overflow-wrap: anywhere; pointer-events: none; }
+.caption-status { margin-top: .75rem; max-height: 30vh; overflow: auto; }
+@media (max-width: 760px) { .proxy-preview { position: static; } }
