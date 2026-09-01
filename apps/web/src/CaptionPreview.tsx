@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { activeCaption } from './captions.js';
-import type { CaptionPlan } from './captions.js';
+import type { CaptionPlan, EmphasisPlan } from './captions.js';
 
 export function useCaptionPlan(projectId: string, revision: string) {
   const [reload, setReload] = useState(0);
@@ -32,9 +32,36 @@ export function useCaptionPlan(projectId: string, revision: string) {
     loading: !current, reload: () => setReload(n => n + 1) };
 }
 
-export function CaptionOverlay({ plan, time }: { plan: CaptionPlan | null; time: number }) {
+export function useEmphasisPlan(projectId: string, revision: string) {
+  const [result, setResult] = useState<{ key: string; plan: EmphasisPlan | null } | null>(null);
+  const key = JSON.stringify([projectId, revision]);
+  useEffect(() => {
+    const controller = new AbortController();
+    let disposed = false;
+    void fetch(`http://127.0.0.1:8000/projects/${projectId}/emphasis`,
+      { signal: controller.signal, cache: 'no-store' }).then(async response => {
+        if (!response.ok) return null;
+        return await response.json() as EmphasisPlan;
+      }).then(plan => { if (!disposed) setResult({ key, plan }); }).catch(() => {
+        if (!disposed) setResult({ key, plan: null });
+      });
+    return () => { disposed = true; controller.abort(); };
+  }, [key, projectId]);
+  return result?.key === key ? result.plan : null;
+}
+
+export function CaptionOverlay({ plan, emphasis = null, time }: {
+  plan: CaptionPlan | null; emphasis?: EmphasisPlan | null; time: number;
+}) {
   const active = activeCaption(plan, time);
-  return active ? <div className="caption-overlay" data-caption-id={active.caption_id}>{active.text}</div> : null;
+  const aggregate = active && emphasis?.caption_aggregates?.find(item => item.caption_id === active.caption_id);
+  const decision = aggregate && emphasis?.decisions?.find(item => item.decision_id === aggregate.selected_decision_id);
+  return active ? <div className="caption-overlay" data-caption-id={active.caption_id}>
+    <span>{active.text}</span>
+    {decision && <small className="emphasis-diagnostic">
+      {decision.text} · {decision.behavior.toUpperCase()} · {decision.score.toFixed(2)} · E {decision.signals.energy.toFixed(2)} · P {decision.signals.pause.toFixed(2)} · D {decision.signals.duration.toFixed(2)}
+    </small>}
+  </div> : null;
 }
 
 export function CaptionStatus({ plan, error, loading, reload }: {

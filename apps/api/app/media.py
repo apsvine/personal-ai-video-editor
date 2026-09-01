@@ -39,8 +39,9 @@ LOCAL_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173"}
 
 
 class JobRequest(BaseModel):
-    stage: Literal["normalize", "transcribe", "analyze", "audio_features", "plan"] = "normalize"
+    stage: Literal["normalize", "transcribe", "analyze", "audio_features", "plan", "emphasis"] = "normalize"
     caption_settings: dict | None = None
+    emphasis_settings: dict | None = None
 
 
 class ImportRequest(BaseModel):
@@ -152,7 +153,8 @@ def proxy(project_id: str):
 def start_job(project_id: str, request: Request, body: JobRequest | None = None):
     guard_write(request)
     return manager().start(project_id, stage=body.stage if body else "normalize",
-                           caption_settings=body.caption_settings if body else None)
+                           caption_settings=body.caption_settings if body else None,
+                           emphasis_settings=body.emphasis_settings if body else None)
 
 
 @router.get("/projects/{project_id}/jobs/latest")
@@ -261,6 +263,12 @@ def get_captions(project_id: str):
 def get_audio_features(project_id: str):
     from python.audio_features.features import read_audio_features
     return read_audio_features(PROJECTS, read_project(PROJECTS, project_id))
+
+
+@router.get('/projects/{project_id}/emphasis')
+def get_emphasis(project_id: str):
+    from python.emphasis.store import read_emphasis
+    return read_emphasis(PROJECTS, read_project(PROJECTS, project_id))
 
 
 @router.get('/projects/{project_id}/cuts/review')

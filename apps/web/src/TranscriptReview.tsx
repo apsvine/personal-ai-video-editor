@@ -1,6 +1,6 @@
 import CutReview from './CutReview.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CaptionOverlay, CaptionStatus, useCaptionPlan } from './CaptionPreview.js';
+import { CaptionOverlay, CaptionStatus, useCaptionPlan, useEmphasisPlan } from './CaptionPreview.js';
 import { activeSegment, seekVideo, timedWords } from './transcript.js';
 import type { Review, Segment } from './transcript.js';
 
@@ -38,6 +38,7 @@ export default function TranscriptReview({ projectId, revision, busy }: {
   const [cutRevision, setCutRevision] = useState(0);
   const cutsChanged = useCallback(() => setCutRevision(n => n + 1), []);
   const captionState = useCaptionPlan(projectId, JSON.stringify([revision, review, cutRevision, saving, reload]));
+  const emphasisPlan = useEmphasisPlan(projectId, JSON.stringify([revision, review, cutRevision, saving, reload]));
   const video = useRef<HTMLVideoElement>(null);
   const generation = useRef(0);
   const savingRef = useRef(false);
@@ -114,7 +115,7 @@ export default function TranscriptReview({ projectId, revision, busy }: {
       onTimeUpdate={event => setTime(event.currentTarget.currentTime)}
       onSeeking={event => setTime(event.currentTarget.currentTime)}
       onSeeked={event => setTime(event.currentTarget.currentTime)} />
-    <CaptionOverlay plan={saving || loading || busy ? null : captionState.plan} time={time} />
+    <CaptionOverlay plan={saving || loading || busy ? null : captionState.plan} emphasis={emphasisPlan} time={time} />
     </div>
     <CaptionStatus {...captionState} />
     </div>

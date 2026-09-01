@@ -1,7 +1,7 @@
 # Personal AI Video Editor
 
 A private, local-first AI video editing application for one user. V1 will
-target talking-head vertical videos. The current phase is **Phase 08A: Voice Delivery Feature Extraction**, built on approved Phases 00–07. It publishes explainable audio measurements only; caption emphasis policy and rendering remain future work.
+target talking-head vertical videos. The current phase is **Phase 08B: Bounded Voice-Reactive Emphasis Policy**, built on approved Phases 00–08A. It converts explainable measurements into restrained renderer-independent decisions; animation and rendering remain future work.
 
 ## North-star workflow
 
@@ -203,7 +203,7 @@ must require an explicit user choice. Do not assume prior chat context.
 
 ## Explicitly not built yet
 
-Conservative silence cuts, caption planning, and voice-delivery feature extraction are implemented. There is no voice-reactive caption policy, rendering, database, authentication, or desktop packaging.
+Conservative silence cuts, caption planning, voice-delivery feature extraction, and bounded emphasis policy are implemented. There is no caption animation, rendering, database, authentication, or desktop packaging.
 Remotion and Electron are not installed. No models or media are bundled.
 Phase 08B and later functionality is deliberately excluded.
 
@@ -934,3 +934,38 @@ existing decisions. Phases 00–06 remain intact. No rendered video exists.
 
 The user explicitly authorized Phase 07 commit, feature/main pushes, merge and
 annotated stable tag. This acceptance does not authorize Phase 08 or rendering.
+
+## Phase 08B — Bounded Voice-Reactive Emphasis Policy
+
+POST `/projects/{id}/jobs` with `{"stage":"emphasis"}` after current captions and
+audio features exist. GET `/projects/{id}/emphasis` returns the validated separate
+`analysis/emphasis.json`. Optional `emphasis_settings` are expanded, stored on the
+job and retained on retry. The browser may show a static diagnostic word, behavior,
+score and signals; it does not animate or render captions.
+
+Caption words join to feature words only by `(segment_id, word_index)`, matching raw
+transcript identity, and exact source bounds after the Phase 07 audio offset. Missing,
+invalid or mismatched records warn and receive no decision. Display text is never
+matched or realigned, and omitted Phase 07 words cannot be resurrected.
+
+```text
+relative_energy = clamp(relative_energy_db / 6, 0, 1)
+energy = 0.60 * normalized_energy + 0.40 * relative_energy
+pause = max(clamp(pause_before / 0.75), clamp(pause_after / 0.75))
+duration = clamp((relative_duration - 1.0) / 1.5, 0, 1)
+score = clamp(0.50 * energy + 0.30 * pause + 0.20 * duration, 0, 1)
+```
+
+Below 0.35 selects `none`; 0.35–0.62 and 0.62–0.72 select `subtle`. A strong shape
+requires score ≥0.72. Deterministic priority is `punch` > `hold` > `pop` > `subtle`
+> `none`: score ≥0.85 with two components ≥0.65 selects `punch`; otherwise duration
+≥0.75 selects `hold`; otherwise energy ≥0.75 selects `pop`. Only those three labels are
+strong. At most one source word per caption can be strong. Strong events require
+1.5 seconds since the previous approved event and no more than two events in a rolling
+eight-second window. Suppressed candidates become subtle while retaining evidence.
+
+`reactive_enabled:false` produces a provenance-bound artifact with no decisions or
+aggregates and does not change captions, timings or earlier artifacts. Cache identity
+includes schema/policy versions, both source artifact checksums and expanded settings.
+Publication is atomic. Limitations: delivery-only evidence and project-relative
+loudness; no pitch, semantics, emotion, speaker separation, animation or renderer data.
