@@ -11,9 +11,10 @@ from python.media import normalization as n
 from python.transcription import engine as transcription
 from python.editing import cuts
 from python.editing import captions, caption_store
+from python.audio_features import features
 from python.common.control import JobControl, job_context
 
-STAGES = ('normalize', 'transcribe', 'analyze', 'plan', 'render')
+STAGES = ('normalize', 'transcribe', 'analyze', 'audio_features', 'plan', 'render')
 RETRYABLE = ('failed', 'interrupted', 'cancelled')
 
 
@@ -94,8 +95,8 @@ class JobManager:
                 self.save(job)
 
     def start(self, project_id, retry_of=None, reserved=False, runner=None, stage="normalize", caption_settings=None):
-        if stage not in ("normalize", "transcribe", "analyze", "plan"):
-            raise n.MediaError("unsupported_stage", "Only normalize, transcribe, analyze and caption plan are supported.", 422)
+        if stage not in ("normalize", "transcribe", "analyze", "audio_features", "plan"):
+            raise n.MediaError("unsupported_stage", "Only normalize, transcribe, Smart Cuts analysis, audio features and caption plan are supported.", 422)
         if caption_settings is not None and stage != 'plan':
             raise n.MediaError('invalid_settings', 'Caption settings require the plan stage.', 422)
         if stage == 'plan':
@@ -110,7 +111,7 @@ class JobManager:
             source = n.safe_path(n.project_path(self.root, project_id), 'source', project['source']['filename'])
             if not source.is_file() or source.stat().st_size != project['source']['size_bytes']:
                 raise n.MediaError('source_not_ready', 'A complete source upload is required.', 409)
-            if stage in ('transcribe', 'analyze', 'plan'):
+            if stage in ('transcribe', 'analyze', 'audio_features', 'plan'):
                 transcription.normalized_project(self.root, project)
             directory = n.safe_path(n.project_path(self.root, project_id), 'jobs')
             directory.mkdir(exist_ok=True)
@@ -149,7 +150,8 @@ class JobManager:
             with job_context(control):
                 control.check()
                 handler = {"normalize": n.normalize, "transcribe": transcription.transcribe,
-                           "analyze": cuts.analyze, "plan": caption_store.plan}[job["stage"]]
+                           "analyze": cuts.analyze, "audio_features": features.analyze,
+                           "plan": caption_store.plan}[job["stage"]]
                 kwargs = {'settings': job.get('caption_settings')} if job['stage'] == 'plan' and not runner else {}
                 result = (runner or handler)(self.root, n.read_project(self.root, job['project_id']), **kwargs)
             with self.mutex:

@@ -1,7 +1,7 @@
 # Personal AI Video Editor
 
 A private, local-first AI video editing application for one user. V1 will
-target talking-head vertical videos. The current phase is **Phase 07: Caption Planning Engine**, built on approved Phases 00–06. Deterministic captions are JSON plan data with an HTML preview, never rendered video. Phase 07 manual and listening acceptance is approved.
+target talking-head vertical videos. The current phase is **Phase 08A: Voice Delivery Feature Extraction**, built on approved Phases 00–07. It publishes explainable audio measurements only; caption emphasis policy and rendering remain future work.
 
 ## North-star workflow
 
@@ -203,9 +203,9 @@ must require an explicit user choice. Do not assume prior chat context.
 
 ## Explicitly not built yet
 
-Conservative silence-cut and caption planning are implemented. There is no rendering, database, authentication, or desktop packaging.
+Conservative silence cuts, caption planning, and voice-delivery feature extraction are implemented. There is no voice-reactive caption policy, rendering, database, authentication, or desktop packaging.
 Remotion and Electron are not installed. No models or media are bundled.
-Phase 08 and later functionality is deliberately excluded.
+Phase 08B and later functionality is deliberately excluded.
 
 ## Phase 02 behavior and API
 
@@ -881,6 +881,42 @@ realignment, whitespace-oriented token matching when exact chunk reconstruction
 does not apply, max-word counts based on timed source entries, no cross-segment
 minimum-duration merge, possible short genuine intervals with warnings, no edited
 playback or export, and browser event-rate rather than frame-perfect activation.
+
+## Phase 08A voice delivery features
+
+POST `/projects/{id}/jobs` with `{"stage":"audio_features"}` runs the dedicated
+Phase 08A stage; Smart Cuts keeps the existing `analyze` stage. GET
+`/projects/{id}/audio-features` returns the current validated
+`analysis/audio_features.json`. Both endpoints reuse the Phase 03 project
+resolution, job exclusion, retry/recovery and error behavior. The extractor reads
+only the verified mono 16 kHz PCM16 `normalized/audio.wav` and the raw Phase 04
+transcript. Corrections, cut decisions and caption grouping never participate.
+
+For each usable authoritative `[start,end)` word interval, sample indices are
+`floor(start*16000)` through `ceil(end*16000)`, bounded to the WAV. PCM values are
+scaled by 32768 and RMS is `sqrt(mean(sample²))`; dBFS uses a -120 dB numerical
+floor. Project energy normalization linearly maps interpolated P10/P90 word dBFS
+to 0..1 and clamps. Equal non-floor energies use neutral 0.5; all floor-energy
+words use 0.0. Raw RMS/dBFS remain present. `relative_energy_db` compares a word
+with the median of up to five valid words on each side.
+
+Duration is exactly `end-start`. `relative_duration` divides it by the same local
+neighbor median, uses 1.0 for a lone word, and caps at 4.0. Pauses are gaps between
+adjacent valid authoritative words. Negative gaps are never made positive: they
+become zero, and overlaps beyond 1 ms warn. First/last unavailable pauses are null.
+Missing or invalid word timing produces an explicit invalid record and structured
+warning without inferred alignment. Empty transcripts are valid. PCM clipping is
+reported per word, and valid Phase 04 word confidence is preserved as provenance.
+JSON validation rejects all NaN and infinities.
+
+Cache identity contains schema/extractor versions, exact settings, normalized WAV
+SHA-256, raw transcript checksum and a canonical timing checksum. Word IDs hash the
+timing checksum, segment/word indices and exact bounds. Phase 05 text overlays,
+Phase 06 decisions and Phase 07 grouping cannot invalidate the artifact. Publication
+uses the existing flushed/fsynced temporary sibling and atomic replacement; failure
+preserves the previous artifact. Known limitations: one project is treated as one
+recording population; there is no speaker separation, pitch, emotion, semantics,
+re-alignment, caption policy or animation.
 
 ### Phase 07 acceptance — approved
 

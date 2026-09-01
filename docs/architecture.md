@@ -228,3 +228,19 @@ The only new project artifact is `analysis/captions.json`. Source, normalized me
 transcript, transcript overrides, cuts and cut overrides are read-only to Phase 07.
 Tests cover pure grouping/cut safety, atomicity/cache/immutability, jobs, original
 clock activation, seeking, stale snapshots and browser reload.
+
+## Phase 08A voice delivery feature extraction
+
+`python/audio_features/features.py` is a dependency-free PCM16 extractor. It reads
+the original normalized WAV clock and raw Phase 04 word timing, never corrected
+text, effective cuts or captions. It publishes only `analysis/audio_features.json`.
+The explicit `audio_features` job stage avoids overloading Phase 06 `analyze` and
+otherwise uses the existing Phase 03 manager, heavy-operation lock, recovery,
+retry, progress and atomic writer. A read endpoint rebuilds the deterministic
+expected value against current protected inputs before serving the artifact.
+
+RMS/dBFS, robust project percentiles, local energy/duration medians and adjacent
+word gaps are pure deterministic calculations. Invalid individual timing is
+represented and warned without inference. Original-time values are not mapped
+through Phase 06. No frontend, waveform, caption behavior, pitch analysis, semantic
+model, speaker model, renderer or future-stage infrastructure is introduced.
