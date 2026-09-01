@@ -89,7 +89,7 @@ export default function App() {
     }
   }
 
-  async function startAnalysis(stage: 'transcribe' | 'analyze' | 'plan') {
+  async function startAnalysis(stage: 'transcribe' | 'analyze' | 'audio_features' | 'plan' | 'emphasis') {
     if (!activeId) return;
     setError(''); setBusy(true);
     try {
@@ -181,7 +181,9 @@ export default function App() {
           {project.audio_status === 'no_audio' && <p>No audio stream: video is ready; audio.wav was not created.</p>}
           {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('transcribe')}>Transcribe</button>}
           {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('analyze')}>Analyze Smart Cuts</button>}
+          {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('audio_features')}>Extract voice features</button>}
           {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('plan')}>Generate captions</button>}
+          {project.audio_status === 'available' && <button disabled={busy} onClick={() => void startAnalysis('emphasis')}>Generate emphasis</button>}
           <TranscriptReview key={project.project_id} projectId={project.project_id}
             revision={`${job?.job_id}:${job?.status}`} busy={busy} />
         </>}

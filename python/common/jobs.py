@@ -12,9 +12,10 @@ from python.transcription import engine as transcription
 from python.editing import cuts
 from python.editing import captions, caption_store
 from python.audio_features import features
+from python.emphasis import policy as emphasis_policy, store as emphasis_store
 from python.common.control import JobControl, job_context
 
-STAGES = ('normalize', 'transcribe', 'analyze', 'audio_features', 'plan', 'render')
+STAGES = ('normalize', 'transcribe', 'analyze', 'audio_features', 'plan', 'emphasis', 'render')
 RETRYABLE = ('failed', 'interrupted', 'cancelled')
 
 
@@ -94,14 +95,22 @@ class JobManager:
                     'code': 'backend_interrupted', 'message': 'Backend stopped before completion. Retry this job.'})
                 self.save(job)
 
-    def start(self, project_id, retry_of=None, reserved=False, runner=None, stage="normalize", caption_settings=None):
-        if stage not in ("normalize", "transcribe", "analyze", "audio_features", "plan"):
-            raise n.MediaError("unsupported_stage", "Only normalize, transcribe, Smart Cuts analysis, audio features and caption plan are supported.", 422)
+    def start(self, project_id, retry_of=None, reserved=False, runner=None, stage="normalize", caption_settings=None,
+              emphasis_settings=None):
+        if stage not in ("normalize", "transcribe", "analyze", "audio_features", "plan", "emphasis"):
+            raise n.MediaError("unsupported_stage", "Only normalize, transcribe, Smart Cuts analysis, audio features, caption plan and emphasis policy are supported.", 422)
         if caption_settings is not None and stage != 'plan':
             raise n.MediaError('invalid_settings', 'Caption settings require the plan stage.', 422)
+        if emphasis_settings is not None and stage != 'emphasis':
+            raise n.MediaError('invalid_settings', 'Emphasis settings require the emphasis stage.', 422)
         if stage == 'plan':
             try:
                 caption_settings = captions.settings_value(caption_settings)
+            except ValueError as error:
+                raise n.MediaError('invalid_settings', str(error), 422) from error
+        if stage == 'emphasis':
+            try:
+                emphasis_settings = emphasis_policy.settings_value(emphasis_settings)
             except ValueError as error:
                 raise n.MediaError('invalid_settings', str(error), 422) from error
         if not reserved:
@@ -111,7 +120,7 @@ class JobManager:
             source = n.safe_path(n.project_path(self.root, project_id), 'source', project['source']['filename'])
             if not source.is_file() or source.stat().st_size != project['source']['size_bytes']:
                 raise n.MediaError('source_not_ready', 'A complete source upload is required.', 409)
-            if stage in ('transcribe', 'analyze', 'audio_features', 'plan'):
+            if stage in ('transcribe', 'analyze', 'audio_features', 'plan', 'emphasis'):
                 transcription.normalized_project(self.root, project)
             directory = n.safe_path(n.project_path(self.root, project_id), 'jobs')
             directory.mkdir(exist_ok=True)
@@ -122,6 +131,8 @@ class JobManager:
             job['log_path'] = f"logs/job-{job['job_id']}.log"
             if stage == 'plan':
                 job['caption_settings'] = caption_settings
+            if stage == 'emphasis':
+                job['emphasis_settings'] = emphasis_settings
             n.safe_path(n.project_path(self.root, project_id), 'logs', f"job-{job['job_id']}.log").touch()
             self.save(job)
             control = JobControl(self.lockfile.fileno(), lambda value: self.progress(job, value))
@@ -151,8 +162,9 @@ class JobManager:
                 control.check()
                 handler = {"normalize": n.normalize, "transcribe": transcription.transcribe,
                            "analyze": cuts.analyze, "audio_features": features.analyze,
-                           "plan": caption_store.plan}[job["stage"]]
-                kwargs = {'settings': job.get('caption_settings')} if job['stage'] == 'plan' and not runner else {}
+                           "plan": caption_store.plan, "emphasis": emphasis_store.analyze}[job["stage"]]
+                kwargs = ({'settings': job.get('caption_settings')} if job['stage'] == 'plan' and not runner else
+                          {'settings': job.get('emphasis_settings')} if job['stage'] == 'emphasis' and not runner else {})
                 result = (runner or handler)(self.root, n.read_project(self.root, job['project_id']), **kwargs)
             with self.mutex:
                 # Publication is the success boundary; a late cancel must not undo it.
@@ -188,7 +200,8 @@ class JobManager:
         job = self.read(project_id, job_id)
         if job['status'] not in RETRYABLE:
             raise n.MediaError('not_retryable', 'Only failed, interrupted or cancelled jobs can be retried.', 409)
-        return self.start(project_id, retry_of=job_id, stage=job["stage"], caption_settings=job.get('caption_settings'))
+        return self.start(project_id, retry_of=job_id, stage=job["stage"], caption_settings=job.get('caption_settings'),
+                          emphasis_settings=job.get('emphasis_settings'))
 
     def close(self):
         with self.mutex:

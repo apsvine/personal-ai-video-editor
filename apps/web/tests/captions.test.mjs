@@ -23,6 +23,14 @@ test('overlay renders escaped corrected text only when active', () => {
   assert.match(renderToStaticMarkup(createElement(CaptionOverlay,{plan,time:4.1})),/Corrected &lt;text&gt;/);
   assert.equal(renderToStaticMarkup(createElement(CaptionOverlay,{plan,time:5})), '');
 });
+test('overlay may show renderer-independent emphasis diagnostics without animation', () => {
+  const decision={decision_id:'d',caption_id:'c',source_word_id:'w',text:'word',score:.764,behavior:'pop',strong:true,
+    signals:{energy:.8,pause:.6,duration:.4}};
+  const emphasis={decisions:[decision],caption_aggregates:[{caption_id:'c',selected_decision_id:'d'}]};
+  const html=renderToStaticMarkup(createElement(CaptionOverlay,{plan,emphasis,time:4.1}));
+  assert.match(html,/word · POP · 0.76 · E 0.80 · P 0.60 · D 0.40/);
+  assert.doesNotMatch(html,/transform|animation/);
+});
 test('omitted ambiguity warning is visible and readable', () => {
   const html=renderToStaticMarkup(createElement(CaptionStatus,{plan:{...plan,warnings:[
     {type:'ambiguous_text_timing',segment_id:'1',message:'Segment omitted: ambiguous corrected text.'}]},error:'',loading:false,reload:()=>{}}));

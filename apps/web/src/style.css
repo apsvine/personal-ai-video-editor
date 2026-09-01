@@ -49,5 +49,7 @@ textarea { box-sizing: border-box; width: 100%; min-height: 6rem; font: inherit;
   text-align: center; color: white; background: rgb(0 0 0 / 75%);
   font-size: clamp(1rem, 2vw, 1.5rem); font-weight: 600; padding: .3rem .5rem;
   overflow-wrap: anywhere; pointer-events: none; }
+.emphasis-diagnostic { display: block; margin-top: .35rem; font-size: .65rem; font-weight: 600;
+  color: #fde68a; letter-spacing: .02em; }
 .caption-status { margin-top: .75rem; max-height: 30vh; overflow: auto; }
 @media (max-width: 760px) { .proxy-preview { position: static; } }

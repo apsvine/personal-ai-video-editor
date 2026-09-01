@@ -60,7 +60,7 @@ Each job ID is 32 lowercase hexadecimal characters. All records contain:
 
 - `schema_version: 1`, `job_id`, `project_id` (the retained source project).
 - `stage`: contract names `normalize`, `transcribe`, `analyze`, `audio_features`,
-  `plan`, `render`. All except future `render` can execute; `analyze` remains Smart
+  `plan`, `emphasis`, `render`. All except future `render` can execute; `analyze` remains Smart
   Cuts and `audio_features` is the independent Phase 08A extractor.
 - `status`: `pending`, `running`, `succeeded`, `failed`, `cancelled`, `interrupted`.
 - `progress`: finite numeric value in [0.0, 1.0]; 1.0 on success.
@@ -598,3 +598,39 @@ Generation cache-hits only exact content; changed audio, raw transcript/timing,
 settings, schema or extractor version regenerates. The existing atomic JSON writer
 preserves an older complete artifact after failure. POST job stage is
 `audio_features`; GET path is `/projects/{id}/audio-features`.
+
+## analysis/emphasis.json (Phase 08B)
+
+Top-level fields are `schema_version`, `project_id`, `policy_version`,
+`source_audio_features_checksum`, `source_captions_checksum`, `settings`, `decisions`,
+`caption_aggregates`, `warnings`, `summary`, and `content_checksum`. The source fields
+contain the exact Phase 08A and Phase 07 content checksums; `policy_version` is
+`bounded-voice-emphasis-v1`. The canonical
+checksum excludes only itself. All numbers are finite and score/signals are in `[0,1]`.
+
+Each decision contains deterministic `decision_id`, `caption_id`, `source_word_id`,
+segment/word indices, displayed `text`, original bounds, `score`, component `signals`
+(`energy`, `pause`, `duration`), `behavior`, `strong`, nullable `suppression`, and
+threshold-crossing `reasons`. Behaviors are exactly `none`, `subtle`, `pop`, `hold`,
+`punch`; only the last three are strong. Caption aggregates select the highest score,
+breaking exact ties by earlier word order. Other strong-shaped words in that caption
+become subtle with `caption_selection`.
+
+The README specifies the formula, thresholds, and explicit priority `punch` > `hold`
+> `pop` > `subtle` > `none`. Strong events use a 1.5-second
+cooldown and maximum two events per rolling eight seconds. Suppression retains raw
+score/signals and records `cooldown_suppressed` or `rate_limited`. Summary records
+eligible captions, decisions, approved strong events and suppression counts. Warnings
+identify missing, invalid or timing-mismatched feature records without invented values.
+
+Joining requires matching project/raw-transcript identities, exact `(segment_id,
+word_index)`, and bounds after `audio_offset`; text never participates. Therefore cut
+and ambiguity omissions remain absent. `reactive_enabled:false` emits no decisions or
+aggregates, preserving ordinary Phase 07 behavior. IDs hash the full policy/input/
+settings identity and scored source decision; no UUID, randomness or clock participates.
+
+POST jobs accept `{"stage":"emphasis","emphasis_settings":{...}}`; GET uses
+`/projects/{id}/emphasis`. Cache changes with either source checksum, any expanded
+setting, schema or policy version. Atomic publication preserves previous bytes on
+failure. Phase 08B never writes captions, audio features, transcripts, cuts, overrides,
+media or renderer data.

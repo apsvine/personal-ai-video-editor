@@ -244,3 +244,17 @@ word gaps are pure deterministic calculations. Invalid individual timing is
 represented and warned without inference. Original-time values are not mapped
 through Phase 06. No frontend, waveform, caption behavior, pitch analysis, semantic
 model, speaker model, renderer or future-stage infrastructure is introduced.
+
+## Phase 08B bounded emphasis policy
+
+`python/emphasis/policy.py` is pure deterministic policy over current Phase 07 and
+08A artifacts. `store.py` revalidates both inputs, owns cache identity and atomically
+publishes `analysis/emphasis.json`. It joins source words by transcript-bound segment
+and word indices plus exact offset-adjusted bounds, never by displayed text. Caption
+eligibility remains entirely owned by Phase 07.
+
+The explicit `emphasis` job stage reuses Phase 03 locking, recovery, retry and job
+publication. It does not invoke extraction, caption planning or rendering. The read
+endpoint reconstructs expected output using persisted settings. The browser consumes
+only a static diagnostic label. Output contains semantic behavior labels and normalized
+signals, never CSS, transforms, easing, frames, dimensions or renderer configuration.
