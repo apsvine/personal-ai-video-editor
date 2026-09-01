@@ -39,7 +39,7 @@ LOCAL_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173"}
 
 
 class JobRequest(BaseModel):
-    stage: Literal["normalize", "transcribe", "analyze", "plan"] = "normalize"
+    stage: Literal["normalize", "transcribe", "analyze", "audio_features", "plan"] = "normalize"
     caption_settings: dict | None = None
 
 
@@ -255,6 +255,12 @@ def get_cuts(project_id: str):
 def get_captions(project_id: str):
     from python.editing.caption_store import read_captions
     return read_captions(PROJECTS, read_project(PROJECTS, project_id))
+
+
+@router.get('/projects/{project_id}/audio-features')
+def get_audio_features(project_id: str):
+    from python.audio_features.features import read_audio_features
+    return read_audio_features(PROJECTS, read_project(PROJECTS, project_id))
 
 
 @router.get('/projects/{project_id}/cuts/review')

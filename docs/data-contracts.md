@@ -59,8 +59,9 @@ schema is below.
 Each job ID is 32 lowercase hexadecimal characters. All records contain:
 
 - `schema_version: 1`, `job_id`, `project_id` (the retained source project).
-- `stage`: contract names `normalize`, `transcribe`, `analyze`, `plan`, `render`.
-  `normalize`, `transcribe`, `analyze` and caption-only `plan` can execute; `render` has no handler.
+- `stage`: contract names `normalize`, `transcribe`, `analyze`, `audio_features`,
+  `plan`, `render`. All except future `render` can execute; `analyze` remains Smart
+  Cuts and `audio_features` is the independent Phase 08A extractor.
 - `status`: `pending`, `running`, `succeeded`, `failed`, `cancelled`, `interrupted`.
 - `progress`: finite numeric value in [0.0, 1.0]; 1.0 on success.
   Milestones: 0 pending, .05 setup/hash/cache, .15 probe, .25 proxy, .65 audio,
@@ -529,3 +530,71 @@ Browser activation uses `original_start <= video.currentTime < original_end`
 and explicitly hides within `removed`. It does not compare original proxy time with
 edited timestamps. Playback, seeking, reload and job/input revisions update or
 invalidate the preview. There is no automatic edited playback, export or renderer.
+
+## analysis/audio_features.json (Phase 08A)
+
+```json
+{
+  "schema_version": 1,
+  "project_id": "<completed output project ID>",
+  "extractor_version": "pcm16-word-delivery-v1",
+  "source": {
+    "audio_checksum": "<normalized WAV SHA-256>",
+    "transcript_checksum": "<raw transcript content_checksum>",
+    "timing_checksum": "<canonical segment/word timing SHA-256>"
+  },
+  "settings": {
+    "energy_floor_dbfs": -120.0,
+    "energy_lower_percentile": 10.0,
+    "energy_upper_percentile": 90.0,
+    "local_window_words": 5,
+    "overlap_tolerance_seconds": 0.001,
+    "relative_duration_cap": 4.0
+  },
+  "normalization": {
+    "method": "linear_interpolated_project_dbfs_percentiles",
+    "lower_dbfs": -40.0, "upper_dbfs": -20.0,
+    "valid_word_count": 2, "project_duration_median": 0.3
+  },
+  "time_basis": "normalized_audio_seconds",
+  "words": [{
+    "word_id": "word-<deterministic SHA-256>",
+    "segment_id": "0", "word_index": 0, "text": "binary",
+    "start": 1.2, "end": 1.65,
+    "features": {
+      "rms": 0.1, "energy_dbfs": -20.0, "normalized_energy": 1.0,
+      "relative_energy_db": 3.0, "duration": 0.45,
+      "relative_duration": 1.5, "pause_before": null, "pause_after": 0.2
+    },
+    "validity": {"timing_valid": true, "audio_available": true,
+                 "feature_valid": true, "clipped_samples": false,
+                 "source_confidence": 0.9}
+  }],
+  "warnings": [],
+  "content_checksum": "<canonical complete artifact digest>"
+}
+```
+
+Times are authoritative Phase 04 WAV seconds and never corrected, shifted through
+cuts or inferred. RMS consumes bounded PCM indices `floor(start*16000)` through
+`ceil(end*16000)`, after scaling signed PCM16 by 32768. dBFS has a -120 dB floor.
+Linear-interpolated project P10/P90 dBFS maps to `[0,1]`; identical non-floor words
+use 0.5 and an all-floor project uses 0.0. Relative energy and duration use the
+median of up to five valid neighbors on each side. Duration is the genuine interval;
+the relative ratio is capped at 4.0. Adjacent negative gaps become zero; overlaps
+beyond 1 ms add `overlapping_word_timing`. First/last unavailable gaps are null.
+
+Invalid individual word timing keeps a stable record with null times/features and
+`timing_valid: false`, plus `invalid_word_timing`; absent word lists add
+`missing_word_timing`. No timestamps are invented. Empty transcripts are valid.
+Every float is finite and serialization forbids NaN/infinity. `clipped_samples`
+reports any PCM endpoint sample. `source_confidence` preserves a valid Phase 04
+word probability or is null; it is provenance, not a calibrated feature score.
+
+Identity includes every source/settings/version field. Word IDs hash timing identity,
+segment/word index and exact bounds. Phase 05 overlays, Phase 06 decisions and Phase
+07 captions are excluded. GET validates by reconstructing the expected artifact.
+Generation cache-hits only exact content; changed audio, raw transcript/timing,
+settings, schema or extractor version regenerates. The existing atomic JSON writer
+preserves an older complete artifact after failure. POST job stage is
+`audio_features`; GET path is `/projects/{id}/audio-features`.
